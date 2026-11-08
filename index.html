@@ -4,15 +4,19 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>DIMIKA | Boutique Store Manager</title>
+  <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
+  <!-- React & ReactDOM -->
   <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <!-- Babel compiler for inline JSX -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  
+
+  <!-- Firebase SDKs -->
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
-  
+
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
     body { font-family: 'Plus Jakarta Sans', sans-serif; }
@@ -23,6 +27,7 @@
   <div id="root"></div>
 
   <script type="text/babel">
+    // --- FIREBASE CONFIGURATION (DIMIKA PROD) ---
     const firebaseConfig = {
       apiKey: "AIzaSyDBizHM3e0uV5FDwipQuYXphM-4YpPF5sQ",
       authDomain: "dimika.firebaseapp.com",
@@ -38,36 +43,85 @@
 
     const { useState, useEffect, useMemo } = React;
 
+    const DEFAULT_CATEGORIES = [
+      'Vestidos de fiesta',
+      'Sastrería',
+      'Tops / Blusas',
+      'Pantalones / Faldas',
+      'Accesorios'
+    ];
+
+    const DEFAULT_COLORS = [
+      { id: 'c-1', name: 'Blanco', hex: '#FFFFFF' },
+      { id: 'c-2', name: 'Negro', hex: '#1C1917' },
+      { id: 'c-3', name: 'Lila', hex: '#C084FC' },
+      { id: 'c-4', name: 'Rosa / Chicle', hex: '#F472B6' },
+      { id: 'c-5', name: 'Fucsia', hex: '#E11D48' },
+      { id: 'c-6', name: 'Rojo', hex: '#DC2626' },
+      { id: 'c-7', name: 'Dorado / Champagne', hex: '#D97706' },
+      { id: 'c-8', name: 'Plata', hex: '#9CA3AF' },
+      { id: 'c-9', name: 'Verde / Esmeralda', hex: '#059669' },
+      { id: 'c-10', name: 'Azul Noche', hex: '#1E3A8A' },
+      { id: 'c-11', name: 'Nude / Manteca', hex: '#E5E0D8' },
+      { id: 'c-12', name: 'Marrón / Chocolate', hex: '#78350F' }
+    ];
+
     function App() {
       const [user, setUser] = useState(null);
       const [loadingAuth, setLoadingAuth] = useState(true);
+
       const [emailInput, setEmailInput] = useState('');
       const [passInput, setPassInput] = useState('');
       const [loginError, setLoginError] = useState('');
 
       const [products, setProducts] = useState([]);
+      const [expenses, setExpenses] = useState([]);
       const [salesHistory, setSalesHistory] = useState([]);
-      const [activeTab, setActiveTab] = useState('inventory');
+      const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
+      const [customColors, setCustomColors] = useState(DEFAULT_COLORS);
+
+      const [globalLogisticsPct, setGlobalLogisticsPct] = useState(25.0);
+      const [isManualLogisticsOverride, setIsManualLogisticsOverride] = useState(false);
+
+      const [activeTab, setActiveTab] = useState('dashboard');
       const [searchTerm, setSearchTerm] = useState('');
+      const [selectedCategory, setSelectedCategory] = useState('All');
+      const [selectedStatus, setSelectedStatus] = useState('All');
+      const [expandedStockRows, setExpandedStockRows] = useState({});
 
       const [isProductModalOpen, setIsProductModalOpen] = useState(false);
+      const [editingProduct, setEditingProduct] = useState(null);
+
+      const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
+      const [editingExpense, setEditingExpense] = useState(null);
+
       const [isSellModalOpen, setIsSellModalOpen] = useState(false);
       const [activeSellProduct, setActiveSellProduct] = useState(null);
       const [selectedSellVariantIndex, setSelectedSellVariantIndex] = useState(0);
+
+      const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+      const [activeShareProduct, setActiveShareProduct] = useState(null);
+      const [copiedText, setCopiedText] = useState(false);
 
       const [prodForm, setProdForm] = useState({
         name: '',
         category: 'Vestidos de fiesta',
         costFlores: '',
+        markupPct: '130',
         finalPrice: '',
         variants: [{ color: 'Blanco', size: 'M', quantity: 1 }]
       });
 
+      const [expenseForm, setExpenseForm] = useState({ concept: '', amount: '', category: 'Viaje', notes: '' });
+
       const [sellForm, setSellForm] = useState({
         quantityToSell: '1',
-        salePrice: ''
+        salePrice: '',
+        paymentMethod: 'Efectivo',
+        notes: ''
       });
 
+      // --- AUTH LISTENER ---
       useEffect(() => {
         const unsubscribe = auth.onAuthStateChanged((currentUser) => {
           setUser(currentUser);
@@ -88,55 +142,151 @@
 
       const handleLogout = () => auth.signOut();
 
+      // --- FIRESTORE REALTIME ---
       useEffect(() => {
         if (!user) return;
+
         const unsubProducts = db.collection('products').onSnapshot(snapshot => {
           const items = [];
           snapshot.forEach(doc => items.push({ id: doc.id, ...doc.data() }));
           setProducts(items);
         });
+
+        const unsubExpenses = db.collection('expenses').onSnapshot(snapshot => {
+          const items = [];
+          snapshot.forEach(doc => items.push({ id: doc.id, ...doc.data() }));
+          setExpenses(items);
+        });
+
         const unsubSales = db.collection('sales').onSnapshot(snapshot => {
           const items = [];
           snapshot.forEach(doc => items.push({ id: doc.id, ...doc.data() }));
           setSalesHistory(items.sort((a, b) => new Date(b.soldAt) - new Date(a.soldAt)));
         });
-        return () => { unsubProducts(); unsubSales(); };
+
+        return () => {
+          unsubProducts();
+          unsubExpenses();
+          unsubSales();
+        };
       }, [user]);
 
-      const exportFullBackupToCSV = () => {
-        let csvContent = "=== BACKUP GENERAL DIMIKA ===\n\n";
-        csvContent += "--- INVENTARIO ---\nID,Nombre,Categoria,Costo Flores,Precio Venta,Color,Talle,Stock\n";
-        products.forEach(p => {
-          (p.variants || []).forEach(v => {
-            csvContent += `"${p.id}","${p.name}","${p.category || 'General'}",${p.costFlores},${p.finalPrice || 0},"${v.color}","${v.size}",${v.quantity}\n`;
-          });
-        });
-        csvContent += "\n--- HISTORIAL DE VENTAS ---\nFecha,Producto,Color,Talle,Cantidad,Precio Venta Unitario\n";
-        salesHistory.forEach(s => {
-          csvContent += `"${new Date(s.soldAt).toLocaleString('es-AR')}","${s.productName}","${s.color}","${s.size}",${s.quantitySold},${s.salePrice}\n`;
-        });
+      // Metrics
+      const totalLogisticsCost = useMemo(() => {
+        return expenses.reduce((acc, curr) => acc + (parseFloat(curr.amount) || 0), 0);
+      }, [expenses]);
 
-        const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
-        const link = document.createElement("a");
-        link.href = URL.createObjectURL(blob);
-        link.download = `DIMIKA_Backup_${new Date().toISOString().slice(0, 10)}.csv`;
-        link.click();
+      const totalFloresCost = useMemo(() => {
+        return products.reduce((acc, p) => {
+          const totalUnits = (p.variants || []).reduce((sum, v) => sum + (parseInt(v.quantity) || 0), 0);
+          return acc + ((parseFloat(p.costFlores) || 0) * totalUnits);
+        }, 0);
+      }, [products]);
+
+      const calculatedLogisticsPct = useMemo(() => {
+        if (totalFloresCost > 0 && totalLogisticsCost > 0) {
+          return parseFloat(((totalLogisticsCost / totalFloresCost) * 100).toFixed(1));
+        }
+        return 25.0;
+      }, [totalFloresCost, totalLogisticsCost]);
+
+      useEffect(() => {
+        if (!isManualLogisticsOverride) {
+          setGlobalLogisticsPct(calculatedLogisticsPct);
+        }
+      }, [calculatedLogisticsPct, isManualLogisticsOverride]);
+
+      const stats = useMemo(() => {
+        const totalInvertedReal = totalFloresCost + totalLogisticsCost;
+        const totalSalesRevenue = salesHistory.reduce((acc, s) => acc + (parseFloat(s.salePrice) * parseInt(s.quantitySold)), 0);
+        const netProfitRealized = salesHistory.reduce((acc, s) => {
+          const itemRealCost = (parseFloat(s.costFlores) || 0) * (1 + globalLogisticsPct / 100);
+          const profitPerUnit = parseFloat(s.salePrice) - itemRealCost;
+          return acc + (profitPerUnit * parseInt(s.quantitySold));
+        }, 0);
+
+        const totalUnitsInStock = products.reduce((acc, p) => {
+          return acc + (p.variants || []).reduce((sum, v) => sum + (parseInt(v.quantity) || 0), 0);
+        }, 0);
+
+        const totalValuedStockPrice = products.reduce((acc, p) => {
+          const units = (p.variants || []).reduce((sum, v) => sum + (parseInt(v.quantity) || 0), 0);
+          return acc + ((parseFloat(p.finalPrice) || parseFloat(p.priceSuggested) || 0) * units);
+        }, 0);
+
+        const projectedProfit = totalValuedStockPrice + totalSalesRevenue - totalInvertedReal;
+
+        return {
+          totalInvertedReal,
+          totalSalesRevenue,
+          netProfitRealized,
+          totalUnitsInStock,
+          totalValuedStockPrice,
+          projectedProfit
+        };
+      }, [products, expenses, salesHistory, totalFloresCost, totalLogisticsCost, globalLogisticsPct]);
+
+      const calculateCosts = (floresInput, markupInput) => {
+        const flores = parseFloat(floresInput) || 0;
+        const markup = parseFloat(markupInput) || 130;
+        const costReal = Math.round(flores * (1 + globalLogisticsPct / 100));
+        const suggested = Math.round(costReal * (1 + markup / 100));
+        return { costReal, suggested };
       };
 
       const getProductStockTotal = (p) => {
         return (p.variants || []).reduce((sum, v) => sum + (parseInt(v.quantity) || 0), 0);
       };
 
+      const exportFullBackupToCSV = () => {
+        let csvContent = "=== BACKUP COMPLETO DIMIKA ===\n\n";
+        csvContent += "--- INVENTARIO DE PRENDAS ---\nID,Nombre,Categoria,Costo Flores,Costo Cordoba,Precio Venta,Color,Talle,Stock\n";
+        products.forEach(p => {
+          const cbaCost = Math.round((parseFloat(p.costFlores) || 0) * (1 + globalLogisticsPct / 100));
+          (p.variants || []).forEach(v => {
+            csvContent += `"${p.id}","${p.name}","${p.category || 'General'}",${p.costFlores},${cbaCost},${p.finalPrice || 0},"${v.color}","${v.size}",${v.quantity}\n`;
+          });
+        });
+        csvContent += "\n--- HISTORIAL DE VENTAS ---\nFecha,Producto,Color,Talle,Cantidad,Precio Venta Unitario,Medio Pago,Notas\n";
+        salesHistory.forEach(s => {
+          csvContent += `"${new Date(s.soldAt).toLocaleString('es-AR')}","${s.productName}","${s.color}","${s.size}",${s.quantitySold},${s.salePrice},"${s.paymentMethod || 'Efectivo'}","${s.notes || ''}"\n`;
+        });
+        csvContent += "\n--- GASTOS DE VIAJE Y FLETE ---\nConcepto,Rubro,Importe,Notas\n";
+        expenses.forEach(e => {
+          csvContent += `"${e.concept}","${e.category}",${e.amount},"${e.notes || ''}"\n`;
+        });
+
+        const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = `DIMIKA_Backup_Completo_${new Date().toISOString().slice(0, 10)}.csv`;
+        link.click();
+      };
+
+      const filteredProducts = useMemo(() => {
+        return products.filter(p => {
+          const searchMatch = p.name?.toLowerCase().includes(searchTerm.toLowerCase());
+          const catMatch = selectedCategory === 'All' || p.category === selectedCategory;
+          const totalStock = getProductStockTotal(p);
+          let stockMatch = selectedStatus === 'All' || (selectedStatus === 'available' ? totalStock > 0 : totalStock === 0);
+          return searchMatch && catMatch && stockMatch;
+        });
+      }, [products, searchTerm, selectedCategory, selectedStatus]);
+
       const handleSaveProduct = async (e) => {
         e.preventDefault();
         if (!prodForm.name || !prodForm.costFlores) return;
         const floresNum = parseFloat(prodForm.costFlores);
-        const finalPriceNum = parseFloat(prodForm.finalPrice) || Math.round(floresNum * 2.3);
+        const markupNum = parseFloat(prodForm.markupPct) || 130;
+        const { costReal, suggested } = calculateCosts(floresNum, markupNum);
+        const finalPriceNum = prodForm.finalPrice !== '' ? parseFloat(prodForm.finalPrice) : suggested;
 
         const itemData = {
           name: prodForm.name,
           category: prodForm.category,
           costFlores: floresNum,
+          markupPct: markupNum,
+          priceSuggested: suggested,
           finalPrice: finalPriceNum,
           variants: prodForm.variants.map(v => ({
             color: v.color,
@@ -145,9 +295,13 @@
           }))
         };
 
-        await db.collection('products').add(itemData);
+        if (editingProduct) {
+          await db.collection('products').doc(editingProduct.id).update(itemData);
+        } else {
+          await db.collection('products').add(itemData);
+        }
         setIsProductModalOpen(false);
-        setProdForm({ name: '', category: 'Vestidos de fiesta', costFlores: '', finalPrice: '', variants: [{ color: 'Blanco', size: 'M', quantity: 1 }] });
+        setEditingProduct(null);
       };
 
       const handleConfirmSale = async (e) => {
@@ -161,36 +315,45 @@
           return v;
         });
 
+        const flores = parseFloat(activeSellProduct.costFlores) || 0;
+        const realCostCba = Math.round(flores * (1 + globalLogisticsPct / 100));
+        const salePriceNum = parseFloat(sellForm.salePrice) || activeSellProduct.finalPrice;
+        const netProfitUnit = salePriceNum - realCostCba;
+
         await db.collection('products').doc(activeSellProduct.id).update({ variants: updatedVariants });
         await db.collection('sales').add({
+          productId: activeSellProduct.id,
           productName: activeSellProduct.name,
+          category: activeSellProduct.category,
           color: variant.color,
           size: variant.size,
           quantitySold: qtyToSell,
-          salePrice: parseFloat(sellForm.salePrice),
+          salePrice: salePriceNum,
+          costFlores: flores,
+          netProfitUnit,
+          paymentMethod: sellForm.paymentMethod,
+          notes: sellForm.notes,
           soldAt: new Date().toISOString()
         });
 
         setIsSellModalOpen(false);
       };
 
-      const addVariantRow = () => {
-        setProdForm(prev => ({ ...prev, variants: [...prev.variants, { color: 'Blanco', size: 'M', quantity: 1 }] }));
-      };
-
-      const updateVariantRow = (index, field, value) => {
-        setProdForm(prev => {
-          const updated = [...prev.variants];
-          updated[index] = { ...updated[index], [field]: value };
-          return { ...prev, variants: updated };
+      const handleSaveExpense = async (e) => {
+        e.preventDefault();
+        if (!expenseForm.concept || !expenseForm.amount) return;
+        await db.collection('expenses').add({
+          concept: expenseForm.concept,
+          amount: parseFloat(expenseForm.amount),
+          category: expenseForm.category,
+          notes: expenseForm.notes || '',
+          createdAt: new Date().toISOString()
         });
+        setIsExpenseModalOpen(false);
+        setExpenseForm({ concept: '', amount: '', category: 'Viaje', notes: '' });
       };
 
-      const filteredProducts = useMemo(() => {
-        return products.filter(p => p.name?.toLowerCase().includes(searchTerm.toLowerCase()));
-      }, [products, searchTerm]);
-
-      if (loadingAuth) return <div className="min-h-screen flex items-center justify-center text-xs text-stone-500">Cargando DIMIKA...</div>;
+      if (loadingAuth) return <div className="min-h-screen flex items-center justify-center text-xs text-stone-500">Cargando DIMIKA Store Manager...</div>;
 
       if (!user) {
         return (
@@ -205,13 +368,13 @@
                 {loginError && <div className="p-3 bg-rose-50 text-rose-700 text-center rounded-xl font-medium border border-rose-200">{loginError}</div>}
                 <div>
                   <label className="block text-stone-700 font-medium mb-1">Correo Electrónico</label>
-                  <input type="email" required placeholder="tu-email@gmail.com" value={emailInput} onChange={e => setEmailInput(e.target.value)} className="w-full h-11 px-3 bg-stone-50 border rounded-xl focus:outline-none focus:border-amber-900" />
+                  <input type="email" required placeholder="socia@dimika.com" value={emailInput} onChange={e => setEmailInput(e.target.value)} className="w-full h-11 px-3 bg-stone-50 border rounded-xl" />
                 </div>
                 <div>
                   <label className="block text-stone-700 font-medium mb-1">Contraseña</label>
-                  <input type="password" required placeholder="••••••••" value={passInput} onChange={e => setPassInput(e.target.value)} className="w-full h-11 px-3 bg-stone-50 border rounded-xl focus:outline-none focus:border-amber-900" />
+                  <input type="password" required placeholder="••••••••" value={passInput} onChange={e => setPassInput(e.target.value)} className="w-full h-11 px-3 bg-stone-50 border rounded-xl" />
                 </div>
-                <button type="submit" className="w-full h-11 rounded-xl bg-amber-900 hover:bg-amber-800 text-white font-bold text-xs transition-all shadow-md">Iniciar Sesión</button>
+                <button type="submit" className="w-full h-11 rounded-xl bg-amber-900 hover:bg-amber-800 text-white font-bold text-xs shadow-md">Iniciar Sesión</button>
               </form>
             </div>
           </div>
@@ -230,78 +393,109 @@
                   <p className="text-xs text-stone-500">{user.email}</p>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <button onClick={exportFullBackupToCSV} className="px-3 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 font-bold text-xs transition-colors">📥 Backup Excel</button>
-                <button onClick={() => setIsProductModalOpen(true)} className="px-4 py-2 rounded-xl bg-amber-900 hover:bg-amber-800 text-white font-bold text-xs shadow-sm">+ Cargar Prenda</button>
-                <button onClick={handleLogout} className="px-3 py-2 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-600 font-bold text-xs transition-colors">Salir</button>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-stone-100 border border-stone-300 text-xs">
+                  <span className="text-stone-600 font-medium">Recargo Flete:</span>
+                  <input 
+                    type="number" step="0.1" value={globalLogisticsPct}
+                    onChange={(e) => { setGlobalLogisticsPct(parseFloat(e.target.value) || 0); setIsManualLogisticsOverride(true); }}
+                    className="w-12 bg-white border rounded text-center font-bold text-amber-900"
+                  />
+                  <span className="font-bold text-amber-900">%</span>
+                </div>
+                <button onClick={exportFullBackupToCSV} className="px-3 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 font-bold text-xs">📥 Backup Excel</button>
+                <button onClick={() => { setEditingProduct(null); setProdForm({ name: '', category: categories[0], costFlores: '', markupPct: '130', finalPrice: '', variants: [{ color: 'Blanco', size: 'M', quantity: 1 }] }); setIsProductModalOpen(true); }} className="px-4 py-2 rounded-xl bg-amber-900 text-white font-bold text-xs">+ Cargar Prenda</button>
+                <button onClick={handleLogout} className="px-3 py-2 rounded-xl bg-stone-100 text-stone-600 font-bold text-xs">Salir</button>
               </div>
             </div>
           </header>
 
-          {/* Main Content */}
-          <main className="max-w-7xl mx-auto px-4 py-6 space-y-4">
-            <div className="flex justify-between items-center flex-wrap gap-3">
-              <div className="flex space-x-2 border-b border-stone-200 pb-2">
-                <button onClick={() => setActiveTab('inventory')} className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${activeTab === 'inventory' ? 'bg-amber-900 text-white' : 'bg-stone-100 text-stone-700'}`}>
-                  Inventario ({products.length})
-                </button>
-                <button onClick={() => setActiveTab('sales')} className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${activeTab === 'sales' ? 'bg-amber-900 text-white' : 'bg-stone-100 text-stone-700'}`}>
-                  Ventas ({salesHistory.length})
-                </button>
-              </div>
-
-              {activeTab === 'inventory' && (
-                <input 
-                  type="text" 
-                  placeholder="Buscar prenda..." 
-                  value={searchTerm} 
-                  onChange={e => setSearchTerm(e.target.value)}
-                  className="h-9 px-3 bg-white border rounded-xl text-xs w-full sm:w-64"
-                />
-              )}
+          {/* Main Dashboard Navigation */}
+          <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
+            <div className="flex space-x-2 border-b border-stone-200 pb-2 overflow-x-auto">
+              <button onClick={() => setActiveTab('dashboard')} className={`px-4 py-2 rounded-xl text-xs font-bold ${activeTab === 'dashboard' ? 'bg-amber-900 text-white' : 'bg-stone-100 text-stone-700'}`}>
+                Balance General
+              </button>
+              <button onClick={() => setActiveTab('inventory')} className={`px-4 py-2 rounded-xl text-xs font-bold ${activeTab === 'inventory' ? 'bg-amber-900 text-white' : 'bg-stone-100 text-stone-700'}`}>
+                Inventario Completo ({products.length})
+              </button>
+              <button onClick={() => setActiveTab('expenses')} className={`px-4 py-2 rounded-xl text-xs font-bold ${activeTab === 'expenses' ? 'bg-amber-900 text-white' : 'bg-stone-100 text-stone-700'}`}>
+                Gastos de Viaje (${stats.totalInvertedReal - totalFloresCost})
+              </button>
+              <button onClick={() => setActiveTab('sales')} className={`px-4 py-2 rounded-xl text-xs font-bold ${activeTab === 'sales' ? 'bg-amber-900 text-white' : 'bg-stone-100 text-stone-700'}`}>
+                Historial Ventas ({salesHistory.length})
+              </button>
             </div>
 
-            {/* Inventory Table */}
+            {/* TAB: DASHBOARD */}
+            {activeTab === 'dashboard' && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="p-5 rounded-2xl bg-white border border-stone-200 shadow-sm">
+                  <span className="text-xs font-semibold text-stone-500 uppercase">Inversión Real Total</span>
+                  <div className="text-2xl font-bold font-mono text-stone-900 mt-2">${stats.totalInvertedReal.toLocaleString('es-AR')}</div>
+                  <p className="text-[11px] text-stone-500 mt-1">Flores + Gastos de Viaje</p>
+                </div>
+                <div className="p-5 rounded-2xl bg-white border border-stone-200 shadow-sm">
+                  <span className="text-xs font-semibold text-stone-500 uppercase">Total Recaudado Ventas</span>
+                  <div className="text-2xl font-bold font-mono text-emerald-800 mt-2">${stats.totalSalesRevenue.toLocaleString('es-AR')}</div>
+                  <p className="text-[11px] text-stone-500 mt-1">Total dinero cobrado</p>
+                </div>
+                <div className="p-5 rounded-2xl bg-amber-900 text-white border rounded-2xl shadow-sm">
+                  <span className="text-xs font-semibold text-amber-200 uppercase">Ganancia Neta Obtenida</span>
+                  <div className="text-2xl font-bold font-mono text-amber-100 mt-2">${stats.netProfitRealized.toLocaleString('es-AR')}</div>
+                  <p className="text-[11px] text-amber-200/80 mt-1">Limpia descontando fletes</p>
+                </div>
+                <div className="p-5 rounded-2xl bg-white border border-stone-200 shadow-sm">
+                  <span className="text-xs font-semibold text-stone-500 uppercase">Stock Valuado Venta</span>
+                  <div className="text-2xl font-bold font-mono text-stone-900 mt-2">${stats.totalValuedStockPrice.toLocaleString('es-AR')}</div>
+                  <p className="text-[11px] text-stone-500 mt-1">{stats.totalUnitsInStock} prendas en perchero</p>
+                </div>
+              </div>
+            )}
+
+            {/* TAB: INVENTORY */}
             {activeTab === 'inventory' && (
               <div className="bg-white border border-stone-200 rounded-2xl overflow-hidden shadow-sm">
                 <table className="w-full text-left text-xs">
                   <thead>
                     <tr className="border-b bg-[#F9F6F0] text-stone-600 font-medium">
-                      <th className="py-3 px-4">Prenda / Categoría</th>
+                      <th className="py-3 px-4">Prenda</th>
                       <th className="py-3 px-3">Variantes & Talles</th>
-                      <th className="py-3 px-3 text-center">Stock Total</th>
+                      <th className="py-3 px-3 text-center">Stock</th>
                       <th className="py-3 px-3">Costo Flores</th>
-                      <th className="py-3 px-3 text-amber-900 font-bold">Precio Venta</th>
+                      <th className="py-3 px-3 text-amber-950 font-bold">Costo Córdoba (+{globalLogisticsPct}%)</th>
+                      <th className="py-3 px-3 text-stone-900 font-bold">Precio Venta</th>
                       <th className="py-3 px-4 text-right">Acción</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-stone-100">
                     {filteredProducts.length === 0 ? (
-                      <tr><td colSpan="6" className="py-10 text-center text-stone-400">No hay prendas guardadas. Tocá <strong>"+ Cargar Prenda"</strong> arriba para empezar.</td></tr>
+                      <tr><td colSpan="7" className="py-8 text-center text-stone-400">No hay prendas registradas. Tocá "+ Cargar Prenda".</td></tr>
                     ) : (
                       filteredProducts.map(product => {
+                        const flores = parseFloat(product.costFlores) || 0;
+                        const realCostCba = Math.round(flores * (1 + globalLogisticsPct / 100));
+                        const finalPrice = parseFloat(product.finalPrice) || 0;
                         const totalStock = getProductStockTotal(product);
+
                         return (
-                          <tr key={product.id} className="h-14 hover:bg-amber-50/30 transition-colors">
-                            <td className="py-3 px-4">
-                              <div className="font-semibold text-stone-900">{product.name}</div>
-                              <div className="text-[10px] text-stone-400">{product.category}</div>
-                            </td>
+                          <tr key={product.id} className="h-14 hover:bg-stone-50">
+                            <td className="py-3 px-4 font-semibold text-stone-900">{product.name}</td>
                             <td className="py-3 px-3">
-                              <div className="flex flex-wrap gap-1">
-                                {(product.variants || []).map((v, i) => (
-                                  <span key={i} className={`px-2 py-0.5 rounded-full border text-[11px] ${v.quantity <= 0 ? 'bg-stone-100 text-stone-400 line-through' : 'bg-stone-50 text-stone-800'}`}>
-                                    {v.color} ({v.size}): <strong className="font-mono">{v.quantity}u</strong>
-                                  </span>
-                                ))}
-                              </div>
+                              {(product.variants || []).map((v, i) => (
+                                <span key={i} className="mr-1.5 px-2 py-0.5 rounded-full bg-stone-100 border text-[11px]">
+                                  {v.color} ({v.size}): <strong className="font-mono">{v.quantity}u</strong>
+                                </span>
+                              ))}
                             </td>
-                            <td className="py-3 px-3 text-center font-mono font-bold text-stone-800">{totalStock} u.</td>
-                            <td className="py-3 px-3 font-mono text-stone-600">${product.costFlores}</td>
-                            <td className="py-3 px-3 font-mono font-bold text-amber-900">${product.finalPrice}</td>
+                            <td className="py-3 px-3 text-center font-mono font-bold">{totalStock} u.</td>
+                            <td className="py-3 px-3 font-mono">${flores.toLocaleString('es-AR')}</td>
+                            <td className="py-3 px-3 font-mono font-bold text-amber-950">${realCostCba.toLocaleString('es-AR')}</td>
+                            <td className="py-3 px-3 font-mono font-bold text-stone-900">${finalPrice.toLocaleString('es-AR')}</td>
                             <td className="py-3 px-4 text-right">
                               {totalStock > 0 && (
-                                <button onClick={() => { setActiveSellProduct(product); setSellForm({ quantityToSell: '1', salePrice: String(product.finalPrice) }); setIsSellModalOpen(true); }} className="px-3 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold transition-all">
+                                <button onClick={() => { setActiveSellProduct(product); setSellForm({ quantityToSell: '1', salePrice: String(finalPrice), paymentMethod: 'Efectivo', notes: '' }); setIsSellModalOpen(true); }} className="px-3 py-1.5 rounded-xl bg-emerald-700 text-white font-bold">
                                   Vender
                                 </button>
                               )}
@@ -315,9 +509,39 @@
               </div>
             )}
 
-            {/* Sales Table */}
+            {/* TAB: EXPENSES */}
+            {activeTab === 'expenses' && (
+              <div className="space-y-4">
+                <div className="flex justify-between items-center bg-white p-4 border rounded-2xl">
+                  <h3 className="font-bold text-stone-900 text-sm">Gastos de Viaje y Logística</h3>
+                  <button onClick={() => setIsExpenseModalOpen(true)} className="px-4 py-2 bg-amber-900 text-white text-xs font-bold rounded-xl">+ Cargar Gasto</button>
+                </div>
+                <div className="bg-white border rounded-2xl overflow-hidden shadow-sm">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b bg-[#F9F6F0] text-stone-600 font-medium">
+                        <th className="py-3 px-4">Concepto</th>
+                        <th className="py-3 px-3">Rubro</th>
+                        <th className="py-3 px-4 text-right">Monto ($)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {expenses.map(e => (
+                        <tr key={e.id} className="h-12">
+                          <td className="py-3 px-4 font-semibold">{e.concept}</td>
+                          <td className="py-3 px-3">{e.category}</td>
+                          <td className="py-3 px-4 text-right font-mono font-bold text-amber-900">${parseFloat(e.amount).toLocaleString('es-AR')}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* TAB: SALES HISTORY */}
             {activeTab === 'sales' && (
-              <div className="bg-white border border-stone-200 rounded-2xl overflow-hidden shadow-sm">
+              <div className="bg-white border rounded-2xl overflow-hidden shadow-sm">
                 <table className="w-full text-left text-xs">
                   <thead>
                     <tr className="border-b bg-[#F9F6F0] text-stone-600 font-medium">
@@ -328,20 +552,16 @@
                       <th className="py-3 px-4 text-right">Total Cobrado</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-stone-100">
-                    {salesHistory.length === 0 ? (
-                      <tr><td colSpan="5" className="py-10 text-center text-stone-400">Aún no registraste ventas.</td></tr>
-                    ) : (
-                      salesHistory.map((s, idx) => (
-                        <tr key={idx} className="h-12 hover:bg-stone-50">
-                          <td className="py-3 px-4 font-mono text-stone-500">{new Date(s.soldAt).toLocaleDateString('es-AR')}</td>
-                          <td className="py-3 px-3 font-semibold text-stone-800">{s.productName}</td>
-                          <td className="py-3 px-3">{s.color} ({s.size})</td>
-                          <td className="py-3 px-3 text-center font-mono font-bold">{s.quantitySold}</td>
-                          <td className="py-3 px-4 text-right font-mono font-bold text-emerald-800">${(parseFloat(s.salePrice) * parseInt(s.quantitySold)).toLocaleString('es-AR')}</td>
-                        </tr>
-                      ))
-                    )}
+                  <tbody className="divide-y">
+                    {salesHistory.map((s, idx) => (
+                      <tr key={idx} className="h-12">
+                        <td className="py-3 px-4 text-stone-500 font-mono">{new Date(s.soldAt).toLocaleDateString('es-AR')}</td>
+                        <td className="py-3 px-3 font-semibold">{s.productName}</td>
+                        <td className="py-3 px-3">{s.color} ({s.size})</td>
+                        <td className="py-3 px-3 text-center font-mono font-bold">{s.quantitySold}</td>
+                        <td className="py-3 px-4 text-right font-mono font-bold text-emerald-800">${(parseFloat(s.salePrice) * parseInt(s.quantitySold)).toLocaleString('es-AR')}</td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
@@ -354,29 +574,31 @@
               <div className="bg-white rounded-2xl p-6 w-full max-w-md space-y-4 shadow-xl">
                 <h3 className="font-bold text-stone-900">Cargar Nueva Prenda</h3>
                 <form onSubmit={handleSaveProduct} className="space-y-3 text-xs">
-                  <input type="text" placeholder="Nombre Prenda (ej: Vestido Lurex)" required value={prodForm.name} onChange={e => setProdForm({...prodForm, name: e.target.value})} className="w-full h-11 px-3 border rounded-xl" />
+                  <input type="text" placeholder="Nombre Prenda" required value={prodForm.name} onChange={e => setProdForm({...prodForm, name: e.target.value})} className="w-full h-11 px-3 border rounded-xl" />
                   <div className="grid grid-cols-2 gap-2">
                     <input type="number" placeholder="Costo Flores ($)" required value={prodForm.costFlores} onChange={e => setProdForm({...prodForm, costFlores: e.target.value})} className="w-full h-11 px-3 border rounded-xl" />
                     <input type="number" placeholder="Precio Venta ($)" value={prodForm.finalPrice} onChange={e => setProdForm({...prodForm, finalPrice: e.target.value})} className="w-full h-11 px-3 border rounded-xl font-bold text-amber-900" />
                   </div>
-                  
-                  <div className="p-3 bg-stone-50 border rounded-xl space-y-2">
-                    <div className="flex justify-between items-center">
-                      <span className="font-semibold text-stone-700">Variantes (Colores/Talles)</span>
-                      <button type="button" onClick={addVariantRow} className="text-amber-900 font-bold">+ Fila</button>
-                    </div>
-                    {prodForm.variants.map((v, idx) => (
-                      <div key={idx} className="flex gap-2">
-                        <input type="text" placeholder="Color" value={v.color} onChange={e => updateVariantRow(idx, 'color', e.target.value)} className="w-1/3 h-9 px-2 border rounded-lg" />
-                        <input type="text" placeholder="Talle" value={v.size} onChange={e => updateVariantRow(idx, 'size', e.target.value)} className="w-1/3 h-9 px-2 border rounded-lg text-center" />
-                        <input type="number" placeholder="Cant" value={v.quantity} onChange={e => updateVariantRow(idx, 'quantity', e.target.value)} className="w-1/3 h-9 px-2 border rounded-lg font-bold text-center" />
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="flex justify-end gap-2 pt-2">
+                  <div className="flex justify-end gap-2">
                     <button type="button" onClick={() => setIsProductModalOpen(false)} className="px-4 py-2 rounded-xl bg-stone-100">Cancelar</button>
-                    <button type="submit" className="px-4 py-2 rounded-xl bg-amber-900 text-white font-bold">Guardar Prenda</button>
+                    <button type="submit" className="px-4 py-2 rounded-xl bg-amber-900 text-white font-bold">Guardar</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* Modal Gasto */}
+          {isExpenseModalOpen && (
+            <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+              <div className="bg-white rounded-2xl p-6 w-full max-w-md space-y-4 shadow-xl">
+                <h3 className="font-bold text-stone-900">Cargar Gasto de Viaje</h3>
+                <form onSubmit={handleSaveExpense} className="space-y-3 text-xs">
+                  <input type="text" placeholder="Concepto (ej: Pasajes colectivo)" required value={expenseForm.concept} onChange={e => setExpenseForm({...expenseForm, concept: e.target.value})} className="w-full h-11 px-3 border rounded-xl" />
+                  <input type="number" placeholder="Importe ($)" required value={expenseForm.amount} onChange={e => setExpenseForm({...expenseForm, amount: e.target.value})} className="w-full h-11 px-3 border rounded-xl font-bold text-amber-900" />
+                  <div className="flex justify-end gap-2">
+                    <button type="button" onClick={() => setIsExpenseModalOpen(false)} className="px-4 py-2 rounded-xl bg-stone-100">Cancelar</button>
+                    <button type="submit" className="px-4 py-2 rounded-xl bg-amber-900 text-white font-bold">Guardar Gasto</button>
                   </div>
                 </form>
               </div>
@@ -389,21 +611,13 @@
               <div className="bg-white rounded-2xl p-6 w-full max-w-md space-y-4 shadow-xl">
                 <h3 className="font-bold text-stone-900">Registrar Venta</h3>
                 <form onSubmit={handleConfirmSale} className="space-y-3 text-xs">
-                  <div>
-                    <label className="block text-stone-600 mb-1">Color y Talle a vender:</label>
-                    <select value={selectedSellVariantIndex} onChange={e => setSelectedSellVariantIndex(parseInt(e.target.value))} className="w-full h-11 px-3 border rounded-xl">
-                      {(activeSellProduct.variants || []).map((v, i) => (
-                        <option key={i} value={i} disabled={v.quantity <= 0}>
-                          {v.color} ({v.size}) - {v.quantity} u. disponibles
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <input type="number" min="1" placeholder="Cantidad" required value={sellForm.quantityToSell} onChange={e => setSellForm({...sellForm, quantityToSell: e.target.value})} className="w-full h-11 px-3 border rounded-xl" />
-                    <input type="number" placeholder="Precio Venta Unitario" required value={sellForm.salePrice} onChange={e => setSellForm({...sellForm, salePrice: e.target.value})} className="w-full h-11 px-3 border rounded-xl font-bold text-emerald-800" />
-                  </div>
-                  <div className="flex justify-end gap-2 pt-2">
+                  <select value={selectedSellVariantIndex} onChange={e => setSelectedSellVariantIndex(parseInt(e.target.value))} className="w-full h-11 px-3 border rounded-xl">
+                    {(activeSellProduct.variants || []).map((v, i) => (
+                      <option key={i} value={i}>{v.color} ({v.size}) - {v.quantity} u.</option>
+                    ))}
+                  </select>
+                  <input type="number" placeholder="Precio Venta Unitario ($)" required value={sellForm.salePrice} onChange={e => setSellForm({...sellForm, salePrice: e.target.value})} className="w-full h-11 px-3 border rounded-xl font-bold text-emerald-800" />
+                  <div className="flex justify-end gap-2">
                     <button type="button" onClick={() => setIsSellModalOpen(false)} className="px-4 py-2 rounded-xl bg-stone-100">Cancelar</button>
                     <button type="submit" className="px-4 py-2 rounded-xl bg-emerald-700 text-white font-bold">Confirmar Venta</button>
                   </div>
@@ -420,6 +634,4 @@
 </body>
 </html>
 ```eof
-
----
 
