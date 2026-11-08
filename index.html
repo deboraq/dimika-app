@@ -27,7 +27,7 @@
   <div id="root"></div>
 
   <script type="text/babel">
-    // --- FIREBASE CONFIGURATION (DIMIKA PROD) ---
+    // --- CONFIGURACIÓN FIREBASE DIMIKA ---
     const firebaseConfig = {
       apiKey: "AIzaSyDBizHM3e0uV5FDwipQuYXphM-4YpPF5sQ",
       authDomain: "dimika.firebaseapp.com",
@@ -41,7 +41,7 @@
     const db = firebase.firestore();
     const auth = firebase.auth();
 
-    const { useState, useEffect, useMemo } = React;
+    const { useState, useEffect, useMemo, useRef } = React;
 
     const DEFAULT_CATEGORIES = [
       'Vestidos de fiesta',
@@ -66,6 +66,12 @@
       { id: 'c-12', name: 'Marrón / Chocolate', hex: '#78350F' }
     ];
 
+    const DEFAULT_EXPENSES = [
+      { id: 'exp-1', concept: 'Pasaje colectivo Córdoba - Flores (Ida/Vuelta)', amount: 110000, category: 'Viaje', notes: 'Servicio semicama' },
+      { id: 'exp-2', concept: 'Bultos de consorcio en colectivo', amount: 20000, category: 'Transporte', notes: 'Bolsas reforzadas' },
+      { id: 'exp-3', concept: 'Viáticos y comida del día', amount: 30000, category: 'Comida', notes: 'Almuerzo y café' }
+    ];
+
     function App() {
       const [user, setUser] = useState(null);
       const [loadingAuth, setLoadingAuth] = useState(true);
@@ -75,7 +81,7 @@
       const [loginError, setLoginError] = useState('');
 
       const [products, setProducts] = useState([]);
-      const [expenses, setExpenses] = useState([]);
+      const [expenses, setExpenses] = useState(DEFAULT_EXPENSES);
       const [salesHistory, setSalesHistory] = useState([]);
       const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
       const [customColors, setCustomColors] = useState(DEFAULT_COLORS);
@@ -89,6 +95,7 @@
       const [selectedStatus, setSelectedStatus] = useState('All');
       const [expandedStockRows, setExpandedStockRows] = useState({});
 
+      // Modals
       const [isProductModalOpen, setIsProductModalOpen] = useState(false);
       const [editingProduct, setEditingProduct] = useState(null);
       const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
@@ -99,7 +106,15 @@
       const [isShareModalOpen, setIsShareModalOpen] = useState(false);
       const [activeShareProduct, setActiveShareProduct] = useState(null);
       const [copiedText, setCopiedText] = useState(false);
+      const [isQuickStockModalOpen, setIsQuickStockModalOpen] = useState(false);
+      const [activeStockProduct, setActiveStockProduct] = useState(null);
+      const [stockMode, setStockMode] = useState('existing');
+      const [quickStockVariantIdx, setQuickStockVariantIdx] = useState(0);
+      const [quickAddQty, setQuickAddQty] = useState('1');
+      const [newStockColor, setNewStockColor] = useState('Negro');
+      const [newStockSize, setNewStockSize] = useState('M');
 
+      // Forms
       const [prodForm, setProdForm] = useState({
         name: '',
         category: 'Vestidos de fiesta',
@@ -110,15 +125,18 @@
       });
 
       const [expenseForm, setExpenseForm] = useState({ concept: '', amount: '', category: 'Viaje', notes: '' });
+      const [sellForm, setSellForm] = useState({ quantityToSell: '1', salePrice: '', paymentMethod: 'Efectivo', notes: '' });
+      const [newCategoryName, setNewCategoryName] = useState('');
+      const [newColorForm, setNewColorForm] = useState({ name: '', hex: '#78350F' });
 
-      const [sellForm, setSellForm] = useState({
-        quantityToSell: '1',
-        salePrice: '',
-        paymentMethod: 'Efectivo',
-        notes: ''
-      });
+      const navContainerRef = useRef(null);
+      const scrollNav = (dir) => {
+        if (navContainerRef.current) {
+          navContainerRef.current.scrollBy({ left: dir === 'left' ? -200 : 200, behavior: 'smooth' });
+        }
+      };
 
-      // --- AUTH LISTENER ---
+      // --- AUTH ---
       useEffect(() => {
         const unsubscribe = auth.onAuthStateChanged((currentUser) => {
           setUser(currentUser);
@@ -143,39 +161,59 @@
       useEffect(() => {
         if (!user) return;
 
-        const unsubProducts = db.collection('products').onSnapshot(snapshot => {
-          const items = [];
-          snapshot.forEach(doc => items.push({ id: doc.id, ...doc.data() }));
-          setProducts(items);
+        const unsubProducts = db.collection('products').onSnapshot(snap => {
+          const list = [];
+          snap.forEach(doc => list.push({ id: doc.id, ...doc.data() }));
+          setProducts(list);
         });
 
-        const unsubExpenses = db.collection('expenses').onSnapshot(snapshot => {
-          const items = [];
-          snapshot.forEach(doc => items.push({ id: doc.id, ...doc.data() }));
-          setExpenses(items);
+        const unsubExpenses = db.collection('expenses').onSnapshot(snap => {
+          const list = [];
+          snap.forEach(doc => list.push({ id: doc.id, ...doc.data() }));
+          if (list.length > 0) setExpenses(list);
         });
 
-        const unsubSales = db.collection('sales').onSnapshot(snapshot => {
-          const items = [];
-          snapshot.forEach(doc => items.push({ id: doc.id, ...doc.data() }));
-          setSalesHistory(items.sort((a, b) => new Date(b.soldAt) - new Date(a.soldAt)));
+        const unsubSales = db.collection('sales').onSnapshot(snap => {
+          const list = [];
+          snap.forEach(doc => list.push({ id: doc.id, ...doc.data() }));
+          setSalesHistory(list.sort((a, b) => new Date(b.soldAt) - new Date(a.soldAt)));
+        });
+
+        const unsubConfig = db.collection('config').doc('settings').onSnapshot(doc => {
+          if (doc.exists) {
+            const data = doc.data();
+            if (data.categories) setCategories(data.categories);
+            if (data.customColors) setCustomColors(data.customColors);
+            if (data.globalLogisticsPct !== undefined) setGlobalLogisticsPct(data.globalLogisticsPct);
+          }
         });
 
         return () => {
           unsubProducts();
           unsubExpenses();
           unsubSales();
+          unsubConfig();
         };
       }, [user]);
 
-      const totalLogisticsCost = useMemo(() => {
-        return expenses.reduce((acc, curr) => acc + (parseFloat(curr.amount) || 0), 0);
-      }, [expenses]);
+      const saveConfigToFirebase = async (newCats, newCols, newPct) => {
+        try {
+          await db.collection('config').doc('settings').set({
+            categories: newCats || categories,
+            customColors: newCols || customColors,
+            globalLogisticsPct: newPct !== undefined ? newPct : globalLogisticsPct
+          }, { merge: true });
+        } catch (e) {
+          console.error("Error config:", e);
+        }
+      };
 
+      // --- CALCULATIONS ---
+      const totalLogisticsCost = useMemo(() => expenses.reduce((acc, curr) => acc + (parseFloat(curr.amount) || 0), 0), [expenses]);
       const totalFloresCost = useMemo(() => {
         return products.reduce((acc, p) => {
-          const totalUnits = (p.variants || []).reduce((sum, v) => sum + (parseInt(v.quantity) || 0), 0);
-          return acc + ((parseFloat(p.costFlores) || 0) * totalUnits);
+          const units = (p.variants || []).reduce((sum, v) => sum + (parseInt(v.quantity) || 0), 0);
+          return acc + ((parseFloat(p.costFlores) || 0) * units);
         }, 0);
       }, [products]);
 
@@ -201,10 +239,7 @@
           return acc + (profitPerUnit * parseInt(s.quantitySold));
         }, 0);
 
-        const totalUnitsInStock = products.reduce((acc, p) => {
-          return acc + (p.variants || []).reduce((sum, v) => sum + (parseInt(v.quantity) || 0), 0);
-        }, 0);
-
+        const totalUnitsInStock = products.reduce((acc, p) => acc + (p.variants || []).reduce((sum, v) => sum + (parseInt(v.quantity) || 0), 0), 0);
         const totalValuedStockPrice = products.reduce((acc, p) => {
           const units = (p.variants || []).reduce((sum, v) => sum + (parseInt(v.quantity) || 0), 0);
           return acc + ((parseFloat(p.finalPrice) || parseFloat(p.priceSuggested) || 0) * units);
@@ -212,15 +247,32 @@
 
         const projectedProfit = totalValuedStockPrice + totalSalesRevenue - totalInvertedReal;
 
-        return {
-          totalInvertedReal,
-          totalSalesRevenue,
-          netProfitRealized,
-          totalUnitsInStock,
-          totalValuedStockPrice,
-          projectedProfit
-        };
+        return { totalInvertedReal, totalSalesRevenue, netProfitRealized, totalUnitsInStock, totalValuedStockPrice, projectedProfit };
       }, [products, expenses, salesHistory, totalFloresCost, totalLogisticsCost, globalLogisticsPct]);
+
+      const analyticsData = useMemo(() => {
+        const prodMap = {}, sizeMap = {}, colorMap = {}, catMap = {}, payMap = { 'Efectivo': 0, 'Transferencia Bancaria': 0, 'Tarjeta de Crédito': 0 };
+        salesHistory.forEach(s => {
+          const qty = parseInt(s.quantitySold) || 1;
+          const rev = parseFloat(s.salePrice) * qty;
+          if (!prodMap[s.productName]) prodMap[s.productName] = { name: s.productName, units: 0, revenue: 0 };
+          prodMap[s.productName].units += qty;
+          prodMap[s.productName].revenue += rev;
+
+          sizeMap[s.size || 'Único'] = (sizeMap[s.size || 'Único'] || 0) + qty;
+          colorMap[s.color || 'Varios'] = (colorMap[s.color || 'Varios'] || 0) + qty;
+          catMap[s.category || 'Otros'] = (catMap[s.category || 'Otros'] || 0) + qty;
+          payMap[s.paymentMethod || 'Efectivo'] = (payMap[s.paymentMethod || 'Efectivo'] || 0) + rev;
+        });
+
+        return {
+          topProducts: Object.values(prodMap).sort((a,b) => b.units - a.units).slice(0, 5),
+          sizeBreakdown: Object.entries(sizeMap).map(([size, units]) => ({ size, units })).sort((a,b) => b.units - a.units),
+          colorBreakdown: Object.entries(colorMap).map(([color, units]) => ({ color, units })).sort((a,b) => b.units - a.units),
+          categoryBreakdown: Object.entries(catMap).map(([category, units]) => ({ category, units })).sort((a,b) => b.units - a.units),
+          paymentMap: payMap
+        };
+      }, [salesHistory]);
 
       const calculateCosts = (floresInput, markupInput) => {
         const flores = parseFloat(floresInput) || 0;
@@ -230,49 +282,80 @@
         return { costReal, suggested };
       };
 
-      const getProductStockTotal = (p) => {
-        return (p.variants || []).reduce((sum, v) => sum + (parseInt(v.quantity) || 0), 0);
-      };
+      const getProductStockTotal = (p) => (p.variants || []).reduce((sum, v) => sum + (parseInt(v.quantity) || 0), 0);
+      const toggleRowExpansion = (id) => setExpandedStockRows(prev => ({ ...prev, [id]: !prev[id] }));
 
-      const toggleRowExpansion = (id) => {
-        setExpandedStockRows(prev => ({ ...prev, [id]: !prev[id] }));
-      };
-
-      const exportFullBackupToCSV = () => {
-        let csvContent = "=== BACKUP COMPLETO DIMIKA ===\n\n";
-        csvContent += "--- INVENTARIO DE PRENDAS ---\nID,Nombre,Categoria,Costo Flores,Costo Cordoba,Precio Venta,Color,Talle,Stock\n";
-        products.forEach(p => {
-          const cbaCost = Math.round((parseFloat(p.costFlores) || 0) * (1 + globalLogisticsPct / 100));
-          (p.variants || []).forEach(v => {
-            csvContent += `"${p.id}","${p.name}","${p.category || 'General'}",${p.costFlores},${cbaCost},${p.finalPrice || 0},"${v.color}","${v.size}",${v.quantity}\n`;
+      const exportToCSV = (type) => {
+        let csvContent = "";
+        let fileName = "";
+        if (type === 'products') {
+          fileName = `DIMIKA_Inventario_${new Date().toISOString().slice(0, 10)}.csv`;
+          csvContent = "ID,Nombre,Categoria,Costo Flores,Costo Real Cordoba,Precio Final,Color,Talle,Stock\n";
+          products.forEach(p => {
+            const realCba = Math.round((parseFloat(p.costFlores) || 0) * (1 + globalLogisticsPct / 100));
+            (p.variants || []).forEach(v => {
+              csvContent += `"${p.id}","${p.name}","${p.category}",${p.costFlores},${realCba},${p.finalPrice || p.priceSuggested},"${v.color}","${v.size}",${v.quantity}\n`;
+            });
           });
-        });
-        csvContent += "\n--- HISTORIAL DE VENTAS ---\nFecha,Producto,Color,Talle,Cantidad,Precio Venta Unitario,Medio Pago,Notas\n";
-        salesHistory.forEach(s => {
-          csvContent += `"${new Date(s.soldAt).toLocaleString('es-AR')}","${s.productName}","${s.color}","${s.size}",${s.quantitySold},${s.salePrice},"${s.paymentMethod || 'Efectivo'}","${s.notes || ''}"\n`;
-        });
-        csvContent += "\n--- GASTOS DE VIAJE Y FLETE ---\nConcepto,Rubro,Importe,Notas\n";
-        expenses.forEach(e => {
-          csvContent += `"${e.concept}","${e.category}",${e.amount},"${e.notes || ''}"\n`;
-        });
+        } else if (type === 'sales') {
+          fileName = `DIMIKA_Ventas_${new Date().toISOString().slice(0, 10)}.csv`;
+          csvContent = "Fecha,Prenda,Categoria,Color,Talle,Cantidad,Precio Venta,Medio Pago,Notas\n";
+          salesHistory.forEach(s => {
+            csvContent += `"${new Date(s.soldAt).toLocaleDateString('es-AR')}","${s.productName}","${s.category}","${s.color}","${s.size}",${s.quantitySold},${s.salePrice},"${s.paymentMethod}","${s.notes || ''}"\n`;
+          });
+        } else if (type === 'expenses') {
+          fileName = `DIMIKA_Gastos_${new Date().toISOString().slice(0, 10)}.csv`;
+          csvContent = "Concepto,Rubro,Importe,Notas\n";
+          expenses.forEach(e => {
+            csvContent += `"${e.concept}","${e.category}",${e.amount},"${e.notes || ''}"\n`;
+          });
+        }
 
         const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
         const link = document.createElement("a");
         link.href = URL.createObjectURL(blob);
-        link.download = `DIMIKA_Backup_Completo_${new Date().toISOString().slice(0, 10)}.csv`;
+        link.download = fileName;
         link.click();
       };
 
       const filteredProducts = useMemo(() => {
         return products.filter(p => {
-          const searchMatch = p.name?.toLowerCase().includes(searchTerm.toLowerCase());
+          const searchMatch = p.name?.toLowerCase().includes(searchTerm.toLowerCase()) || p.category?.toLowerCase().includes(searchTerm.toLowerCase());
           const catMatch = selectedCategory === 'All' || p.category === selectedCategory;
           const totalStock = getProductStockTotal(p);
-          let stockMatch = selectedStatus === 'All' || (selectedStatus === 'available' ? totalStock > 0 : totalStock === 0);
+          let stockMatch = true;
           if (activeTab === 'stock_only') stockMatch = totalStock > 0;
+          else if (selectedStatus === 'available') stockMatch = totalStock > 0;
+          else if (selectedStatus === 'sold_out') stockMatch = totalStock === 0;
           return searchMatch && catMatch && stockMatch;
         });
       }, [products, searchTerm, selectedCategory, selectedStatus, activeTab]);
+
+      // Handlers
+      const openProductModal = (prod = null) => {
+        if (prod) {
+          setEditingProduct(prod);
+          setProdForm({
+            name: prod.name,
+            category: prod.category || categories[0],
+            costFlores: String(prod.costFlores),
+            markupPct: String(prod.markupPct || 130),
+            finalPrice: String(prod.finalPrice || prod.priceSuggested),
+            variants: prod.variants || [{ color: 'Negro', size: 'M', quantity: 1 }]
+          });
+        } else {
+          setEditingProduct(null);
+          setProdForm({
+            name: '',
+            category: categories[0] || 'Vestidos de fiesta',
+            costFlores: '',
+            markupPct: '130',
+            finalPrice: '',
+            variants: [{ color: customColors[0]?.name || 'Negro', size: 'M', quantity: 1 }]
+          });
+        }
+        setIsProductModalOpen(true);
+      };
 
       const handleSaveProduct = async (e) => {
         e.preventDefault();
@@ -289,11 +372,7 @@
           markupPct: markupNum,
           priceSuggested: suggested,
           finalPrice: finalPriceNum,
-          variants: prodForm.variants.map(v => ({
-            color: v.color,
-            size: v.size,
-            quantity: parseInt(v.quantity) || 0
-          }))
+          variants: prodForm.variants.map(v => ({ color: v.color, size: v.size, quantity: parseInt(v.quantity) || 0 }))
         };
 
         if (editingProduct) {
@@ -302,24 +381,46 @@
           await db.collection('products').add(itemData);
         }
         setIsProductModalOpen(false);
-        setEditingProduct(null);
+      };
+
+      const handleDeleteProduct = async (id) => {
+        if (confirm("¿Estás segura de eliminar esta prenda?")) {
+          await db.collection('products').doc(id).delete();
+        }
+      };
+
+      const openQuickStockModal = (product) => {
+        setActiveStockProduct(product);
+        setStockMode('existing');
+        setQuickStockVariantIdx(0);
+        setQuickAddQty('1');
+        setIsQuickStockModalOpen(true);
+      };
+
+      const handleConfirmQuickStock = async (e) => {
+        e.preventDefault();
+        if (!activeStockProduct) return;
+        const qty = parseInt(quickAddQty) || 0;
+        let updatedVariants = [];
+        if (stockMode === 'existing') {
+          updatedVariants = activeStockProduct.variants.map((v, i) => i === quickStockVariantIdx ? { ...v, quantity: v.quantity + qty } : v);
+        } else {
+          updatedVariants = [...activeStockProduct.variants, { color: newStockColor, size: newStockSize, quantity: qty }];
+        }
+        await db.collection('products').doc(activeStockProduct.id).update({ variants: updatedVariants });
+        setIsQuickStockModalOpen(false);
       };
 
       const handleConfirmSale = async (e) => {
         e.preventDefault();
         if (!activeSellProduct) return;
         const variant = activeSellProduct.variants[selectedSellVariantIndex];
-        const qtyToSell = parseInt(sellForm.quantityToSell) || 1;
-
-        const updatedVariants = activeSellProduct.variants.map((v, i) => {
-          if (i === selectedSellVariantIndex) return { ...v, quantity: v.quantity - qtyToSell };
-          return v;
-        });
+        const qty = parseInt(sellForm.quantityToSell) || 1;
+        const updatedVariants = activeSellProduct.variants.map((v, i) => i === selectedSellVariantIndex ? { ...v, quantity: v.quantity - qty } : v);
 
         const flores = parseFloat(activeSellProduct.costFlores) || 0;
         const realCostCba = Math.round(flores * (1 + globalLogisticsPct / 100));
         const salePriceNum = parseFloat(sellForm.salePrice) || activeSellProduct.finalPrice;
-        const netProfitUnit = salePriceNum - realCostCba;
 
         await db.collection('products').doc(activeSellProduct.id).update({ variants: updatedVariants });
         await db.collection('sales').add({
@@ -328,72 +429,47 @@
           category: activeSellProduct.category,
           color: variant.color,
           size: variant.size,
-          quantitySold: qtyToSell,
+          quantitySold: qty,
           salePrice: salePriceNum,
           costFlores: flores,
-          netProfitUnit,
+          netProfitUnit: salePriceNum - realCostCba,
           paymentMethod: sellForm.paymentMethod,
           notes: sellForm.notes,
           soldAt: new Date().toISOString()
         });
-
         setIsSellModalOpen(false);
+      };
+
+      const openExpenseModal = (exp = null) => {
+        if (exp) {
+          setEditingExpense(exp);
+          setExpenseForm({ concept: exp.concept, amount: String(exp.amount), category: exp.category, notes: exp.notes || '' });
+        } else {
+          setEditingExpense(null);
+          setExpenseForm({ concept: '', amount: '', category: 'Viaje', notes: '' });
+        }
+        setIsExpenseModalOpen(true);
       };
 
       const handleSaveExpense = async (e) => {
         e.preventDefault();
-        if (!expenseForm.concept || !expenseForm.amount) return;
-        const expenseData = {
-          concept: expenseForm.concept,
-          amount: parseFloat(expenseForm.amount),
-          category: expenseForm.category,
-          notes: expenseForm.notes || '',
-          createdAt: editingExpense?.createdAt || new Date().toISOString()
-        };
-
+        const data = { concept: expenseForm.concept, amount: parseFloat(expenseForm.amount), category: expenseForm.category, notes: expenseForm.notes };
         if (editingExpense) {
-          await db.collection('expenses').doc(editingExpense.id).update(expenseData);
+          await db.collection('expenses').doc(editingExpense.id).update(data);
         } else {
-          await db.collection('expenses').add(expenseData);
+          await db.collection('expenses').add(data);
         }
         setIsExpenseModalOpen(false);
-        setEditingExpense(null);
-        setExpenseForm({ concept: '', amount: '', category: 'Viaje', notes: '' });
       };
 
-      const addVariantRow = () => {
-        setProdForm(prev => ({ ...prev, variants: [...prev.variants, { color: 'Negro', size: 'M', quantity: 1 }] }));
-      };
-
-      const updateVariantRow = (index, field, value) => {
-        setProdForm(prev => {
-          const updated = [...prev.variants];
-          updated[index] = { ...updated[index], [field]: value };
-          return { ...prev, variants: updated };
-        });
+      const handleDeleteExpense = async (id) => {
+        await db.collection('expenses').doc(id).delete();
       };
 
       const getWhatsAppMessage = (product) => {
         if (!product) return '';
-        const availableVariants = (product.variants || [])
-          .filter(v => v.quantity > 0)
-          .map(v => `• ${v.color} (Talle: ${v.size})`)
-          .join('\n');
-        const finalPrice = product.finalPrice || product.priceSuggested;
-        return `✨ *DIMIKA | Boutique Fiesta (Córdoba)* ✨\n\n👗 *${product.name}*\n🏷️ Categoría: ${product.category}\n💵 *Precio: $${finalPrice.toLocaleString('es-AR')}*\n\n🎨 *Colores y Talles Disponibles:*\n${availableVariants || 'Consultar stock'}\n\n📲 ¡Escribinos para reservar la tuya! 🛍️`;
-      };
-
-      const openShareModal = (product) => {
-        setActiveShareProduct(product);
-        setCopiedText(false);
-        setIsShareModalOpen(true);
-      };
-
-      const copyToClipboard = () => {
-        const text = getWhatsAppMessage(activeShareProduct);
-        navigator.clipboard.writeText(text);
-        setCopiedText(true);
-        setTimeout(() => setCopiedText(false), 2500);
+        const vars = (product.variants || []).filter(v => v.quantity > 0).map(v => `• ${v.color} (Talle: ${v.size})`).join('\n');
+        return `✨ *DIMIKA | Boutique Fiesta (Córdoba)* ✨\n\n👗 *${product.name}*\n🏷️ Categoría: ${product.category}\n💵 *Precio: $${(product.finalPrice || product.priceSuggested).toLocaleString('es-AR')}*\n\n🎨 *Colores y Talles Disponibles:*\n${vars || 'Consultar'}\n\n📲 ¡Escribinos para reservar la tuya! 🛍️`;
       };
 
       if (loadingAuth) return <div className="min-h-screen flex items-center justify-center text-xs text-stone-500">Cargando DIMIKA...</div>;
@@ -445,13 +521,18 @@
                   <span className="text-stone-600 font-medium">Flete (Auto):</span>
                   <input 
                     type="number" step="0.1" value={globalLogisticsPct}
-                    onChange={(e) => { setGlobalLogisticsPct(parseFloat(e.target.value) || 0); setIsManualLogisticsOverride(true); }}
+                    onChange={(e) => { 
+                      const val = parseFloat(e.target.value) || 0;
+                      setGlobalLogisticsPct(val); 
+                      setIsManualLogisticsOverride(true);
+                      saveConfigToFirebase(null, null, val);
+                    }}
                     className="w-12 bg-white border rounded text-center font-bold text-amber-900"
                   />
                   <span className="font-bold text-amber-900">%</span>
                 </div>
-                <button onClick={exportFullBackupToCSV} className="px-3 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 font-bold text-xs">📥 Backup Excel</button>
-                <button onClick={() => { setEditingProduct(null); setProdForm({ name: '', category: categories[0], costFlores: '', markupPct: '130', finalPrice: '', variants: [{ color: 'Negro', size: 'M', quantity: 1 }] }); setIsProductModalOpen(true); }} className="px-4 py-2 rounded-xl bg-amber-900 text-white font-bold text-xs">+ Cargar Prenda</button>
+                <button onClick={() => exportToCSV('products')} className="px-3 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 font-bold text-xs">📥 Backup Excel</button>
+                <button onClick={() => openProductModal()} className="px-4 py-2 rounded-xl bg-amber-900 text-white font-bold text-xs">+ Cargar Prenda</button>
                 <button onClick={handleLogout} className="px-3 py-2 rounded-xl bg-stone-100 text-stone-600 font-bold text-xs">Salir</button>
               </div>
             </div>
@@ -459,25 +540,18 @@
 
           {/* Navigation Tabs */}
           <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
-            <div className="flex space-x-2 border-b border-stone-200 pb-2 overflow-x-auto">
-              <button onClick={() => setActiveTab('dashboard')} className={`px-4 py-2 rounded-xl text-xs font-bold ${activeTab === 'dashboard' ? 'bg-amber-900 text-white' : 'bg-stone-100 text-stone-700'}`}>
-                Balance General
-              </button>
-              <button onClick={() => setActiveTab('inventory')} className={`px-4 py-2 rounded-xl text-xs font-bold ${activeTab === 'inventory' ? 'bg-amber-900 text-white' : 'bg-stone-100 text-stone-700'}`}>
-                Inventario Completo ({products.length})
-              </button>
-              <button onClick={() => setActiveTab('stockleft')} className={`px-4 py-2 rounded-xl text-xs font-bold ${activeTab === 'stockleft' ? 'bg-amber-900 text-white' : 'bg-stone-100 text-stone-700'}`}>
-                Lo Que Me Queda ({stats.totalUnitsInStock} u.)
-              </button>
-              <button onClick={() => setActiveTab('stats')} className={`px-4 py-2 rounded-xl text-xs font-bold ${activeTab === 'stats' ? 'bg-amber-900 text-white' : 'bg-stone-100 text-stone-700'}`}>
-                Estadísticas & Reportes
-              </button>
-              <button onClick={() => setActiveTab('expenses')} className={`px-4 py-2 rounded-xl text-xs font-bold ${activeTab === 'expenses' ? 'bg-amber-900 text-white' : 'bg-stone-100 text-stone-700'}`}>
-                Gastos de Viaje (${totalLogisticsCost.toLocaleString('es-AR')})
-              </button>
-              <button onClick={() => setActiveTab('sales')} className={`px-4 py-2 rounded-xl text-xs font-bold ${activeTab === 'sales' ? 'bg-amber-900 text-white' : 'bg-stone-100 text-stone-700'}`}>
-                Ventas ({salesHistory.length})
-              </button>
+            <div className="flex items-center bg-[#F4EFE6] border border-stone-300 rounded-2xl p-1.5">
+              <button onClick={() => scrollNav('left')} className="p-2 rounded-xl bg-stone-200 text-stone-700">‹</button>
+              <div ref={navContainerRef} className="flex space-x-1 overflow-x-auto scrollbar-none flex-1 py-0.5 px-2">
+                <button onClick={() => setActiveTab('dashboard')} className={`px-4 py-2 rounded-xl text-xs font-bold shrink-0 ${activeTab === 'dashboard' ? 'bg-amber-900 text-white' : 'text-stone-700 hover:bg-stone-200'}`}>Balance General</button>
+                <button onClick={() => setActiveTab('inventory')} className={`px-4 py-2 rounded-xl text-xs font-bold shrink-0 ${activeTab === 'inventory' ? 'bg-amber-900 text-white' : 'text-stone-700 hover:bg-stone-200'}`}>Inventario Completo ({products.length})</button>
+                <button onClick={() => setActiveTab('stock_only')} className={`px-4 py-2 rounded-xl text-xs font-bold shrink-0 ${activeTab === 'stock_only' ? 'bg-amber-900 text-white' : 'text-stone-700 hover:bg-stone-200'}`}>Lo Que Me Queda ({stats.totalUnitsInStock} u.)</button>
+                <button onClick={() => setActiveTab('analytics')} className={`px-4 py-2 rounded-xl text-xs font-bold shrink-0 ${activeTab === 'analytics' ? 'bg-amber-900 text-white' : 'text-stone-700 hover:bg-stone-200'}`}>Estadísticas & Reportes</button>
+                <button onClick={() => setActiveTab('expenses')} className={`px-4 py-2 rounded-xl text-xs font-bold shrink-0 ${activeTab === 'expenses' ? 'bg-amber-900 text-white' : 'text-stone-700 hover:bg-stone-200'}`}>Gastos de Viaje (${totalLogisticsCost.toLocaleString('es-AR')})</button>
+                <button onClick={() => setActiveTab('sales')} className={`px-4 py-2 rounded-xl text-xs font-bold shrink-0 ${activeTab === 'sales' ? 'bg-amber-900 text-white' : 'text-stone-700 hover:bg-stone-200'}`}>Ventas ({salesHistory.length})</button>
+                <button onClick={() => setActiveTab('settings')} className={`px-4 py-2 rounded-xl text-xs font-bold shrink-0 ${activeTab === 'settings' ? 'bg-amber-900 text-white' : 'text-stone-700 hover:bg-stone-200'}`}>Configuración</button>
+              </div>
+              <button onClick={() => scrollNav('right')} className="p-2 rounded-xl bg-stone-200 text-stone-700">›</button>
             </div>
 
             {/* TAB: DASHBOARD */}
@@ -494,7 +568,7 @@
                     <div className="text-2xl font-bold font-mono text-emerald-800">${stats.totalSalesRevenue.toLocaleString('es-AR')}</div>
                     <p className="text-[11px] text-stone-500">Recaudación real acumulada</p>
                   </div>
-                  <div className="p-5 rounded-2xl bg-[#59260B] text-white shadow-sm space-y-1">
+                  <div className="p-5 rounded-2xl bg-amber-900 text-white shadow-sm space-y-1">
                     <span className="text-xs font-semibold text-amber-200 uppercase">Ganancia Neta Obtenida</span>
                     <div className="text-2xl font-bold font-mono text-amber-100">${stats.netProfitRealized.toLocaleString('es-AR')}</div>
                     <p className="text-[11px] text-amber-200/80">Ganancia limpia descontando fletes y viaje</p>
@@ -521,7 +595,7 @@
                     </p>
                     <div className="grid grid-cols-3 gap-2 pt-3 text-xs">
                       <div className="p-3 bg-stone-50 rounded-xl border">
-                        <span className="text-stone-400 block">Gastos del Viaje</span>
+                        <span className="text-stone-400 block">Gastos de Viaje</span>
                         <strong className="text-stone-900 font-mono">${totalLogisticsCost.toLocaleString('es-AR')}</strong>
                       </div>
                       <div className="p-3 bg-stone-50 rounded-xl border">
@@ -538,11 +612,11 @@
               </div>
             )}
 
-            {/* TAB: INVENTORY */}
-            {activeTab === 'inventory' && (
+            {/* TAB: INVENTORY & STOCK ONLY */}
+            {(activeTab === 'inventory' || activeTab === 'stock_only') && (
               <div className="space-y-4">
                 <div className="flex gap-2 flex-wrap items-center bg-white p-4 border rounded-2xl">
-                  <input type="text" placeholder="Buscar prenda..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="h-10 px-3 border rounded-xl text-xs w-64" />
+                  <input type="text" placeholder="Buscar prenda o color..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="h-10 px-3 border rounded-xl text-xs w-64" />
                   <select value={selectedCategory} onChange={e => setSelectedCategory(e.target.value)} className="h-10 px-3 border rounded-xl text-xs">
                     <option value="All">Todas las Categorías</option>
                     {categories.map((c, i) => <option key={i} value={c}>{c}</option>)}
@@ -554,9 +628,9 @@
                       <tr className="border-b bg-[#F9F6F0] text-stone-600 font-medium">
                         <th className="py-3 px-4">Prenda / Categoría</th>
                         <th className="py-3 px-3">Variantes & Talles</th>
-                        <th className="py-3 px-3 text-center">Stock</th>
+                        <th className="py-3 px-3 text-center">Stock Total</th>
                         <th className="py-3 px-3">Costo Flores</th>
-                        <th className="py-3 px-3 text-amber-950 font-bold">Costo Córdoba (+{globalLogisticsPct}%)</th>
+                        <th className="py-3 px-3 text-amber-900 font-bold">Costo Córdoba (+{globalLogisticsPct}%)</th>
                         <th className="py-3 px-3 text-stone-900 font-bold">Precio Venta</th>
                         <th className="py-3 px-4 text-right">Acción</th>
                       </tr>
@@ -568,39 +642,65 @@
                         filteredProducts.map(product => {
                           const flores = parseFloat(product.costFlores) || 0;
                           const realCostCba = Math.round(flores * (1 + globalLogisticsPct / 100));
-                          const finalPrice = parseFloat(product.finalPrice) || 0;
+                          const finalPrice = parseFloat(product.finalPrice) || product.priceSuggested || 0;
                           const totalStock = getProductStockTotal(product);
+                          const isExpanded = expandedStockRows[product.id];
 
                           return (
-                            <tr key={product.id} className="h-14 hover:bg-stone-50">
-                              <td className="py-3 px-4">
-                                <div className="font-semibold text-stone-900">{product.name}</div>
-                                <div className="text-[10px] text-stone-400">{product.category}</div>
-                              </td>
-                              <td className="py-3 px-3">
-                                <div className="flex gap-1 flex-wrap">
-                                  {(product.variants || []).map((v, i) => (
-                                    <span key={i} className={`px-2 py-0.5 rounded-full border text-[11px] ${v.quantity <= 0 ? 'bg-stone-100 text-stone-400 line-through' : 'bg-stone-50 text-stone-800'}`}>
-                                      {v.color} ({v.size}): <strong className="font-mono">{v.quantity}u</strong>
-                                    </span>
-                                  ))}
-                                </div>
-                              </td>
-                              <td className="py-3 px-3 text-center font-mono font-bold">{totalStock} u.</td>
-                              <td className="py-3 px-3 font-mono">${flores.toLocaleString('es-AR')}</td>
-                              <td className="py-3 px-3 font-mono font-bold text-amber-950">${realCostCba.toLocaleString('es-AR')}</td>
-                              <td className="py-3 px-3 font-mono font-bold text-stone-900">${finalPrice.toLocaleString('es-AR')}</td>
-                              <td className="py-3 px-4 text-right">
-                                <div className="flex items-center justify-end gap-1.5">
-                                  <button onClick={() => openShareModal(product)} className="p-2 rounded-xl bg-stone-100 hover:bg-stone-200 text-emerald-700" title="WhatsApp">💬</button>
-                                  {totalStock > 0 && (
-                                    <button onClick={() => { setActiveSellProduct(product); setSellForm({ quantityToSell: '1', salePrice: String(finalPrice), paymentMethod: 'Efectivo', notes: '' }); setIsSellModalOpen(true); }} className="px-3 py-1.5 rounded-xl bg-emerald-700 text-white font-bold">
-                                      Vender
+                            <React.Fragment key={product.id}>
+                              <tr className="h-14 hover:bg-stone-50">
+                                <td className="py-3 px-4">
+                                  <div className="font-semibold text-stone-900">{product.name}</div>
+                                  <div className="text-[10px] text-stone-400">{product.category}</div>
+                                </td>
+                                <td className="py-3 px-3">
+                                  <div className="flex gap-1 flex-wrap">
+                                    {(product.variants || []).map((v, i) => (
+                                      <span key={i} className={`px-2 py-0.5 rounded-full border text-[11px] ${v.quantity <= 0 ? 'bg-stone-100 text-stone-400 line-through' : 'bg-stone-50 text-stone-800'}`}>
+                                        {v.color} ({v.size}): <strong className="font-mono">{v.quantity}u</strong>
+                                      </span>
+                                    ))}
+                                  </div>
+                                </td>
+                                <td className="py-3 px-3 text-center">
+                                  <div className="flex items-center justify-center gap-1">
+                                    <button onClick={() => toggleRowExpansion(product.id)} className="px-2 py-1 rounded bg-stone-100 font-mono font-bold">
+                                      {totalStock} u. {isExpanded ? '▲' : '▼'}
                                     </button>
-                                  )}
-                                </div>
-                              </td>
-                            </tr>
+                                    <button onClick={() => openQuickStockModal(product)} className="px-2 py-1 rounded bg-amber-900 text-white font-bold text-[10px]">+ Stock</button>
+                                  </div>
+                                </td>
+                                <td className="py-3 px-3 font-mono">${flores.toLocaleString('es-AR')}</td>
+                                <td className="py-3 px-3 font-mono font-bold text-amber-900">${realCostCba.toLocaleString('es-AR')}</td>
+                                <td className="py-3 px-3 font-mono font-bold text-stone-900">${finalPrice.toLocaleString('es-AR')}</td>
+                                <td className="py-3 px-4 text-right">
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    <button onClick={() => { setActiveShareProduct(product); setIsShareModalOpen(true); }} className="p-2 rounded-xl bg-stone-100 text-emerald-700" title="WhatsApp">💬</button>
+                                    <button onClick={() => openProductModal(product)} className="p-2 rounded-xl bg-stone-100 text-amber-900" title="Editar">✏️</button>
+                                    {totalStock > 0 && (
+                                      <button onClick={() => { setActiveSellProduct(product); setSelectedSellVariantIndex(0); setSellForm({ quantityToSell: '1', salePrice: String(finalPrice), paymentMethod: 'Efectivo', notes: '' }); setIsSellModalOpen(true); }} className="px-3 py-1.5 rounded-xl bg-emerald-700 text-white font-bold">
+                                        Vender
+                                      </button>
+                                    )}
+                                    <button onClick={() => handleDeleteProduct(product.id)} className="p-2 rounded-xl text-rose-600 hover:bg-rose-50" title="Eliminar">🗑️</button>
+                                  </div>
+                                </td>
+                              </tr>
+                              {isExpanded && (
+                                <tr className="bg-stone-50/50">
+                                  <td colSpan="7" className="p-3">
+                                    <div className="text-[11px] font-semibold text-amber-900 mb-1">Detalle por variante:</div>
+                                    <div className="flex gap-2 flex-wrap">
+                                      {(product.variants || []).map((v, i) => (
+                                        <div key={i} className="px-2 py-1 bg-white border rounded shadow-xs">
+                                          {v.color} ({v.size}): <strong>{v.quantity} u.</strong>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                            </React.Fragment>
                           );
                         })
                       )}
@@ -610,38 +710,30 @@
               </div>
             )}
 
-            {/* TAB: STOCK LEFT */}
-            {activeTab === 'stockleft' && (
-              <div className="bg-white border rounded-2xl p-6 space-y-4 shadow-sm">
-                <h3 className="font-serif font-bold text-stone-900 text-sm">Resumen de Stock Disponible por Prenda</h3>
-                <div className="space-y-3 text-xs">
-                  {products.map(p => (
-                    <div key={p.id} className="p-3 bg-stone-50 border rounded-xl flex justify-between items-center">
-                      <div>
-                        <strong className="text-stone-900">{p.name}</strong> <span className="text-stone-400">({p.category})</span>
-                        <div className="flex gap-1 mt-1">
-                          {(p.variants || []).map((v, i) => (
-                            <span key={i} className="px-2 py-0.5 bg-white border rounded text-[10px]">{v.color} {v.size}: <strong>{v.quantity}u</strong></span>
-                          ))}
-                        </div>
-                      </div>
-                      <div className="text-right font-mono font-bold text-amber-900">Total: {getProductStockTotal(p)} u.</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* TAB: STATS & REPORTS */}
-            {activeTab === 'stats' && (
+            {/* TAB: ANALYTICS & STATS */}
+            {activeTab === 'analytics' && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="bg-white border rounded-2xl p-6 space-y-3 shadow-sm">
-                  <h3 className="font-serif font-bold text-stone-900 text-sm">📊 Rendimiento de Ventas</h3>
-                  <p className="text-xs text-stone-600">Total de prendas vendidas: <strong className="font-mono">{salesHistory.reduce((a, b) => a + parseInt(b.quantitySold), 0)} unidades</strong></p>
+                  <h3 className="font-serif font-bold text-stone-900 text-sm">🏆 Top 5 Prendas Más Vendidas</h3>
+                  <div className="space-y-2 text-xs">
+                    {analyticsData.topProducts.map((p, i) => (
+                      <div key={i} className="flex justify-between p-2 bg-stone-50 rounded-xl border">
+                        <span>#{i+1} <strong>{p.name}</strong> ({p.units} u.)</span>
+                        <span className="font-mono font-bold text-emerald-800">${p.revenue.toLocaleString('es-AR')}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
                 <div className="bg-white border rounded-2xl p-6 space-y-3 shadow-sm">
-                  <h3 className="font-serif font-bold text-stone-900 text-sm">💼 Resumen Financiero Rápido</h3>
-                  <p className="text-xs text-stone-600">Capital en riesgo en mercadería: <strong className="font-mono">${totalFloresCost.toLocaleString('es-AR')}</strong></p>
+                  <h3 className="font-serif font-bold text-stone-900 text-sm">💳 Medios de Pago</h3>
+                  <div className="space-y-2 text-xs">
+                    {Object.entries(analyticsData.paymentMap).map(([m, val], i) => (
+                      <div key={i} className="flex justify-between p-2 bg-stone-50 rounded-xl border">
+                        <span>{m}</span>
+                        <span className="font-mono font-bold text-stone-900">${val.toLocaleString('es-AR')}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             )}
@@ -651,7 +743,7 @@
               <div className="space-y-4">
                 <div className="flex justify-between items-center bg-white p-4 border rounded-2xl">
                   <h3 className="font-bold text-stone-900 text-sm">Gastos de Viaje y Logística</h3>
-                  <button onClick={() => { setEditingExpense(null); setExpenseForm({ concept: '', amount: '', category: 'Viaje', notes: '' }); setIsExpenseModalOpen(true); }} className="px-4 py-2 bg-amber-900 text-white text-xs font-bold rounded-xl">+ Cargar Gasto</button>
+                  <button onClick={() => openExpenseModal()} className="px-4 py-2 bg-amber-900 text-white text-xs font-bold rounded-xl">+ Cargar Gasto</button>
                 </div>
                 <div className="bg-white border rounded-2xl overflow-hidden shadow-sm">
                   <table className="w-full text-left text-xs">
@@ -659,7 +751,9 @@
                       <tr className="border-b bg-[#F9F6F0] text-stone-600 font-medium">
                         <th className="py-3 px-4">Concepto</th>
                         <th className="py-3 px-3">Rubro</th>
-                        <th className="py-3 px-4 text-right">Monto ($)</th>
+                        <th className="py-3 px-3">Notas</th>
+                        <th className="py-3 px-4 text-right">Importe ($)</th>
+                        <th className="py-3 px-4 text-right">Acción</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y">
@@ -667,7 +761,12 @@
                         <tr key={e.id} className="h-12">
                           <td className="py-3 px-4 font-semibold">{e.concept}</td>
                           <td className="py-3 px-3">{e.category}</td>
+                          <td className="py-3 px-3 text-stone-400">{e.notes || '-'}</td>
                           <td className="py-3 px-4 text-right font-mono font-bold text-amber-900">${parseFloat(e.amount).toLocaleString('es-AR')}</td>
+                          <td className="py-3 px-4 text-right">
+                            <button onClick={() => openExpenseModal(e)} className="p-1.5 bg-stone-100 rounded mr-1">✏️</button>
+                            <button onClick={() => handleDeleteExpense(e.id)} className="p-1.5 bg-rose-50 text-rose-600 rounded">🗑️</button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -703,33 +802,70 @@
                 </table>
               </div>
             )}
+
+            {/* TAB: SETTINGS */}
+            {activeTab === 'settings' && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-white p-6 border rounded-2xl shadow-sm text-xs">
+                <div>
+                  <h3 className="font-bold text-stone-900 text-sm mb-3">🏷️ Categorías</h3>
+                  <form onSubmit={e => { e.preventDefault(); if(newCategoryName){ const c = [...categories, newCategoryName]; setCategories(c); setNewCategoryName(''); saveConfigToFirebase(c, null, globalLogisticsPct); }}} className="flex gap-2 mb-3">
+                    <input type="text" placeholder="Nueva categoría" value={newCategoryName} onChange={e => setNewCategoryName(e.target.value)} className="flex-1 h-9 px-3 border rounded-xl" />
+                    <button type="submit" className="px-3 bg-amber-900 text-white rounded-xl font-bold">Agregar</button>
+                  </form>
+                  <div className="space-y-1">
+                    {categories.map((c, i) => (
+                      <div key={i} className="p-2 bg-stone-50 border rounded flex justify-between">{c} <button onClick={() => { const nc = categories.filter(x=>x!==c); setCategories(nc); saveConfigToFirebase(nc, null, globalLogisticsPct); }}>❌</button></div>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <h3 className="font-bold text-stone-900 text-sm mb-3">🎨 Colores</h3>
+                  <form onSubmit={e => { e.preventDefault(); if(newColorForm.name){ const nc = [...customColors, {id:'c-'+Date.now(), ...newColorForm}]; setCustomColors(nc); setNewColorForm({name:'', hex:'#78350F'}); saveConfigToFirebase(null, nc, globalLogisticsPct); }}} className="flex gap-2 mb-3">
+                    <input type="color" value={newColorForm.hex} onChange={e => setNewColorForm({...newColorForm, hex: e.target.value})} className="w-9 h-9" />
+                    <input type="text" placeholder="Nombre color" value={newColorForm.name} onChange={e => setNewColorForm({...newColorForm, name: e.target.value})} className="flex-1 h-9 px-3 border rounded-xl" />
+                    <button type="submit" className="px-3 bg-amber-900 text-white rounded-xl font-bold">Agregar</button>
+                  </form>
+                  <div className="space-y-1">
+                    {customColors.map(c => (
+                      <div key={c.id} className="p-2 bg-stone-50 border rounded flex justify-between items-center"><span className="flex items-center gap-2"><span className="w-3 h-3 rounded-full border" style={{backgroundColor: c.hex}}></span>{c.name}</span> <button onClick={() => { const ncl = customColors.filter(x=>x.id!==c.id); setCustomColors(ncl); saveConfigToFirebase(null, ncl, globalLogisticsPct); }}>❌</button></div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
           </main>
 
-          {/* Modal Cargar Prenda */}
+          {/* MODAL: CARGAR / EDITAR PRENDA */}
           {isProductModalOpen && (
             <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-              <div className="bg-white rounded-2xl p-6 w-full max-w-lg space-y-4 shadow-xl max-h-[90vh] overflow-y-auto">
-                <h3 className="font-bold text-stone-900">Cargar Nueva Prenda</h3>
-                <form onSubmit={handleSaveProduct} className="space-y-3 text-xs">
+              <div className="bg-white rounded-2xl p-6 w-full max-w-lg space-y-4 shadow-xl max-h-[90vh] overflow-y-auto text-xs">
+                <h3 className="font-bold text-stone-900 text-sm">{editingProduct ? 'Editar Prenda' : 'Cargar Nueva Prenda'}</h3>
+                <form onSubmit={handleSaveProduct} className="space-y-3">
                   <input type="text" placeholder="Nombre Prenda" required value={prodForm.name} onChange={e => setProdForm({...prodForm, name: e.target.value})} className="w-full h-11 px-3 border rounded-xl" />
                   <select value={prodForm.category} onChange={e => setProdForm({...prodForm, category: e.target.value})} className="w-full h-11 px-3 border rounded-xl">
                     {categories.map((c, i) => <option key={i} value={c}>{c}</option>)}
                   </select>
                   <div className="grid grid-cols-2 gap-2">
-                    <input type="number" placeholder="Costo Flores ($)" required value={prodForm.costFlores} onChange={e => setProdForm({...prodForm, costFlores: e.target.value})} className="w-full h-11 px-3 border rounded-xl" />
+                    <input type="number" placeholder="Costo Flores ($)" required value={prodForm.costFlores} onChange={e => {
+                      const val = e.target.value;
+                      const { suggested } = calculateCosts(val, prodForm.markupPct);
+                      setProdForm({...prodForm, costFlores: val, finalPrice: String(suggested)});
+                    }} className="w-full h-11 px-3 border rounded-xl" />
                     <input type="number" placeholder="Precio Venta ($)" value={prodForm.finalPrice} onChange={e => setProdForm({...prodForm, finalPrice: e.target.value})} className="w-full h-11 px-3 border rounded-xl font-bold text-amber-900" />
                   </div>
 
                   <div className="p-3 bg-stone-50 border rounded-xl space-y-2">
                     <div className="flex justify-between items-center">
                       <span className="font-semibold text-stone-700">Variantes (Colores / Talles / Stock)</span>
-                      <button type="button" onClick={addVariantRow} className="text-amber-900 font-bold">+ Fila</button>
+                      <button type="button" onClick={() => setProdForm(prev => ({...prev, variants: [...prev.variants, {color: customColors[0]?.name || 'Negro', size: 'M', quantity: 1}]}))} className="text-amber-900 font-bold">+ Fila</button>
                     </div>
                     {prodForm.variants.map((v, idx) => (
                       <div key={idx} className="flex gap-2">
-                        <input type="text" placeholder="Color" value={v.color} onChange={e => updateVariantRow(idx, 'color', e.target.value)} className="w-1/3 h-9 px-2 border rounded-lg" />
-                        <input type="text" placeholder="Talle" value={v.size} onChange={e => updateVariantRow(idx, 'size', e.target.value)} className="w-1/3 h-9 px-2 border rounded-lg text-center" />
-                        <input type="number" placeholder="Cant" value={v.quantity} onChange={e => updateVariantRow(idx, 'quantity', e.target.value)} className="w-1/3 h-9 px-2 border rounded-lg font-bold text-center" />
+                        <select value={v.color} onChange={e => { const u=[...prodForm.variants]; u[idx].color=e.target.value; setProdForm({...prodForm, variants:u}); }} className="w-1/3 h-9 px-2 border rounded-lg">
+                          {customColors.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                        </select>
+                        <input type="text" placeholder="Talle" value={v.size} onChange={e => { const u=[...prodForm.variants]; u[idx].size=e.target.value; setProdForm({...prodForm, variants:u}); }} className="w-1/3 h-9 px-2 border rounded-lg text-center" />
+                        <input type="number" placeholder="Cant" value={v.quantity} onChange={e => { const u=[...prodForm.variants]; u[idx].quantity=e.target.value; setProdForm({...prodForm, variants:u}); }} className="w-1/3 h-9 px-2 border rounded-lg font-bold text-center" />
                       </div>
                     ))}
                   </div>
@@ -743,14 +879,49 @@
             </div>
           )}
 
-          {/* Modal Gasto */}
+          {/* MODAL: QUICK STOCK */}
+          {isQuickStockModalOpen && activeStockProduct && (
+            <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+              <div className="bg-white rounded-2xl p-6 w-full max-w-md space-y-4 shadow-xl text-xs">
+                <h3 className="font-bold text-stone-900 text-sm">Reponer / Agregar Stock</h3>
+                <div className="flex p-1 bg-stone-100 rounded-xl">
+                  <button type="button" onClick={() => setStockMode('existing')} className={`flex-1 py-1.5 rounded-lg ${stockMode==='existing'?'bg-amber-900 text-white':''}`}>Reponer existente</button>
+                  <button type="button" onClick={() => setStockMode('new_variant')} className={`flex-1 py-1.5 rounded-lg ${stockMode==='new_variant'?'bg-amber-900 text-white':''}`}>Nuevo color/talle</button>
+                </div>
+                <form onSubmit={handleConfirmQuickStock} className="space-y-3">
+                  {stockMode === 'existing' ? (
+                    <select value={quickStockVariantIdx} onChange={e => setQuickStockVariantIdx(parseInt(e.target.value))} className="w-full h-11 px-3 border rounded-xl">
+                      {(activeStockProduct.variants || []).map((v, i) => (
+                        <option key={i} value={i}>{v.color} ({v.size}) - Actual: {v.quantity}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-2">
+                      <select value={newStockColor} onChange={e => setNewStockColor(e.target.value)} className="h-11 px-3 border rounded-xl">
+                        {customColors.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                      </select>
+                      <input type="text" placeholder="Talle" value={newStockSize} onChange={e => setNewStockSize(e.target.value)} className="h-11 px-3 border rounded-xl text-center" />
+                    </div>
+                  )}
+                  <input type="number" placeholder="Cantidad a sumar" min="1" required value={quickAddQty} onChange={e => setQuickAddQty(e.target.value)} className="w-full h-11 px-3 border rounded-xl font-bold" />
+                  <div className="flex justify-end gap-2">
+                    <button type="button" onClick={() => setIsQuickStockModalOpen(false)} className="px-4 py-2 bg-stone-100 rounded-xl">Cancelar</button>
+                    <button type="submit" className="px-4 py-2 bg-amber-900 text-white font-bold rounded-xl">Guardar</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* MODAL: GASTO */}
           {isExpenseModalOpen && (
             <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-              <div className="bg-white rounded-2xl p-6 w-full max-w-md space-y-4 shadow-xl">
-                <h3 className="font-bold text-stone-900">Cargar Gasto de Viaje</h3>
-                <form onSubmit={handleSaveExpense} className="space-y-3 text-xs">
-                  <input type="text" placeholder="Concepto (ej: Pasajes colectivo)" required value={expenseForm.concept} onChange={e => setExpenseForm({...expenseForm, concept: e.target.value})} className="w-full h-11 px-3 border rounded-xl" />
+              <div className="bg-white rounded-2xl p-6 w-full max-w-md space-y-4 shadow-xl text-xs">
+                <h3 className="font-bold text-stone-900 text-sm">Cargar Gasto de Viaje</h3>
+                <form onSubmit={handleSaveExpense} className="space-y-3">
+                  <input type="text" placeholder="Concepto (ej: Pasajes)" required value={expenseForm.concept} onChange={e => setExpenseForm({...expenseForm, concept: e.target.value})} className="w-full h-11 px-3 border rounded-xl" />
                   <input type="number" placeholder="Importe ($)" required value={expenseForm.amount} onChange={e => setExpenseForm({...expenseForm, amount: e.target.value})} className="w-full h-11 px-3 border rounded-xl font-bold text-amber-900" />
+                  <input type="text" placeholder="Notas (opcional)" value={expenseForm.notes} onChange={e => setExpenseForm({...expenseForm, notes: e.target.value})} className="w-full h-11 px-3 border rounded-xl" />
                   <div className="flex justify-end gap-2">
                     <button type="button" onClick={() => setIsExpenseModalOpen(false)} className="px-4 py-2 rounded-xl bg-stone-100">Cancelar</button>
                     <button type="submit" className="px-4 py-2 rounded-xl bg-amber-900 text-white font-bold">Guardar Gasto</button>
@@ -760,12 +931,12 @@
             </div>
           )}
 
-          {/* Modal Venta */}
+          {/* MODAL: VENTA */}
           {isSellModalOpen && activeSellProduct && (
             <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-              <div className="bg-white rounded-2xl p-6 w-full max-w-md space-y-4 shadow-xl">
-                <h3 className="font-bold text-stone-900">Registrar Venta</h3>
-                <form onSubmit={handleConfirmSale} className="space-y-3 text-xs">
+              <div className="bg-white rounded-2xl p-6 w-full max-w-md space-y-4 shadow-xl text-xs">
+                <h3 className="font-bold text-stone-900 text-sm">Registrar Venta</h3>
+                <form onSubmit={handleConfirmSale} className="space-y-3">
                   <select value={selectedSellVariantIndex} onChange={e => setSelectedSellVariantIndex(parseInt(e.target.value))} className="w-full h-11 px-3 border rounded-xl">
                     {(activeSellProduct.variants || []).map((v, i) => (
                       <option key={i} value={i} disabled={v.quantity <= 0}>
@@ -774,6 +945,12 @@
                     ))}
                   </select>
                   <input type="number" placeholder="Precio Venta Unitario ($)" required value={sellForm.salePrice} onChange={e => setSellForm({...sellForm, salePrice: e.target.value})} className="w-full h-11 px-3 border rounded-xl font-bold text-emerald-800" />
+                  <select value={sellForm.paymentMethod} onChange={e => setSellForm({...sellForm, paymentMethod: e.target.value})} className="w-full h-11 px-3 border rounded-xl">
+                    <option value="Efectivo">Efectivo</option>
+                    <option value="Transferencia Bancaria">Transferencia Bancaria</option>
+                    <option value="Tarjeta de Crédito">Tarjeta de Crédito</option>
+                  </select>
+                  <input type="text" placeholder="Notas de venta (opcional)" value={sellForm.notes} onChange={e => setSellForm({...sellForm, notes: e.target.value})} className="w-full h-11 px-3 border rounded-xl" />
                   <div className="flex justify-end gap-2">
                     <button type="button" onClick={() => setIsSellModalOpen(false)} className="px-4 py-2 rounded-xl bg-stone-100">Cancelar</button>
                     <button type="submit" className="px-4 py-2 rounded-xl bg-emerald-700 text-white font-bold">Confirmar Venta</button>
@@ -783,17 +960,17 @@
             </div>
           )}
 
-          {/* Modal WhatsApp */}
+          {/* MODAL: WHATSAPP */}
           {isShareModalOpen && activeShareProduct && (
             <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-              <div className="bg-white rounded-2xl p-6 w-full max-w-md space-y-4 shadow-xl">
-                <h3 className="font-bold text-stone-900">Ficha para WhatsApp</h3>
+              <div className="bg-white rounded-2xl p-6 w-full max-w-md space-y-4 shadow-xl text-xs">
+                <h3 className="font-bold text-stone-900 text-sm">Ficha para WhatsApp</h3>
                 <div className="p-3 bg-stone-50 border rounded-xl font-mono text-[11px] whitespace-pre-wrap select-all">
                   {getWhatsAppMessage(activeShareProduct)}
                 </div>
                 <div className="flex justify-between items-center">
-                  <button onClick={() => setIsShareModalOpen(false)} className="px-4 py-2 rounded-xl bg-stone-100 text-xs">Cerrar</button>
-                  <button onClick={copyToClipboard} className="px-4 py-2 rounded-xl bg-amber-900 text-white text-xs font-bold">
+                  <button onClick={() => setIsShareModalOpen(false)} className="px-4 py-2 rounded-xl bg-stone-100">Cerrar</button>
+                  <button onClick={() => { navigator.clipboard.writeText(getWhatsAppMessage(activeShareProduct)); setCopiedText(true); setTimeout(() => setCopiedText(false), 2000); }} className="px-4 py-2 rounded-xl bg-amber-900 text-white font-bold">
                     {copiedText ? '¡Copiado!' : 'Copiar Texto'}
                   </button>
                 </div>
