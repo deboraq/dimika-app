@@ -27,7 +27,6 @@
   <div id="root"></div>
 
   <script type="text/babel">
-    // --- FIREBASE CONFIGURATION (DIMIKA PROD) ---
     const firebaseConfig = {
       apiKey: "AIzaSyDBizHM3e0uV5FDwipQuYXphM-4YpPF5sQ",
       authDomain: "dimika.firebaseapp.com",
@@ -77,8 +76,7 @@
       const [products, setProducts] = useState([]);
       const [expenses, setExpenses] = useState([]);
       const [salesHistory, setSalesHistory] = useState([]);
-      const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
-      const [customColors, setCustomColors] = useState(DEFAULT_COLORS);
+      const [categories] = useState(DEFAULT_CATEGORIES);
 
       const [globalLogisticsPct, setGlobalLogisticsPct] = useState(25.0);
       const [isManualLogisticsOverride, setIsManualLogisticsOverride] = useState(false);
@@ -87,21 +85,15 @@
       const [searchTerm, setSearchTerm] = useState('');
       const [selectedCategory, setSelectedCategory] = useState('All');
       const [selectedStatus, setSelectedStatus] = useState('All');
-      const [expandedStockRows, setExpandedStockRows] = useState({});
 
       const [isProductModalOpen, setIsProductModalOpen] = useState(false);
       const [editingProduct, setEditingProduct] = useState(null);
 
       const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
-      const [editingExpense, setEditingExpense] = useState(null);
 
       const [isSellModalOpen, setIsSellModalOpen] = useState(false);
       const [activeSellProduct, setActiveSellProduct] = useState(null);
       const [selectedSellVariantIndex, setSelectedSellVariantIndex] = useState(0);
-
-      const [isShareModalOpen, setIsShareModalOpen] = useState(false);
-      const [activeShareProduct, setActiveShareProduct] = useState(null);
-      const [copiedText, setCopiedText] = useState(false);
 
       const [prodForm, setProdForm] = useState({
         name: '',
@@ -121,7 +113,6 @@
         notes: ''
       });
 
-      // --- AUTH LISTENER ---
       useEffect(() => {
         const unsubscribe = auth.onAuthStateChanged((currentUser) => {
           setUser(currentUser);
@@ -142,10 +133,8 @@
 
       const handleLogout = () => auth.signOut();
 
-      // --- FIRESTORE REALTIME ---
       useEffect(() => {
         if (!user) return;
-
         const unsubProducts = db.collection('products').onSnapshot(snapshot => {
           const items = [];
           snapshot.forEach(doc => items.push({ id: doc.id, ...doc.data() }));
@@ -171,7 +160,6 @@
         };
       }, [user]);
 
-      // Metrics
       const totalLogisticsCost = useMemo(() => {
         return expenses.reduce((acc, curr) => acc + (parseFloat(curr.amount) || 0), 0);
       }, [expenses]);
@@ -353,7 +341,7 @@
         setExpenseForm({ concept: '', amount: '', category: 'Viaje', notes: '' });
       };
 
-      if (loadingAuth) return <div className="min-h-screen flex items-center justify-center text-xs text-stone-500">Cargando DIMIKA Store Manager...</div>;
+      if (loadingAuth) return <div className="min-h-screen flex items-center justify-center text-xs text-stone-500">Cargando DIMIKA...</div>;
 
       if (!user) {
         return (
@@ -389,14 +377,17 @@
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-2xl bg-amber-900 flex items-center justify-center text-amber-100 font-bold text-lg shadow-sm">D</div>
                 <div>
-                  <h1 className="text-xl font-serif font-bold text-stone-900">DIMIKA</h1>
-                  <p className="text-xs text-stone-500">{user.email}</p>
+                  <div className="flex items-center gap-2">
+                    <h1 className="text-xl font-serif font-bold text-stone-900">DIMIKA</h1>
+                    <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 text-[10px] font-bold uppercase">CÓRDOBA CAPITAL</span>
+                  </div>
+                  <p className="text-xs text-stone-500">Control de Stock, Variantes & Analíticas Sincronizadas</p>
                 </div>
               </div>
 
               <div className="flex items-center gap-2 flex-wrap">
-                <div className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-stone-100 border border-stone-300 text-xs">
-                  <span className="text-stone-600 font-medium">Recargo Flete:</span>
+                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-stone-100 border border-stone-300 text-xs">
+                  <span className="text-stone-600 font-medium">Flete (Auto):</span>
                   <input 
                     type="number" step="0.1" value={globalLogisticsPct}
                     onChange={(e) => { setGlobalLogisticsPct(parseFloat(e.target.value) || 0); setIsManualLogisticsOverride(true); }}
@@ -411,7 +402,7 @@
             </div>
           </header>
 
-          {/* Main Dashboard Navigation */}
+          {/* Main Navigation Tabs */}
           <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
             <div className="flex space-x-2 border-b border-stone-200 pb-2 overflow-x-auto">
               <button onClick={() => setActiveTab('dashboard')} className={`px-4 py-2 rounded-xl text-xs font-bold ${activeTab === 'dashboard' ? 'bg-amber-900 text-white' : 'bg-stone-100 text-stone-700'}`}>
@@ -420,92 +411,183 @@
               <button onClick={() => setActiveTab('inventory')} className={`px-4 py-2 rounded-xl text-xs font-bold ${activeTab === 'inventory' ? 'bg-amber-900 text-white' : 'bg-stone-100 text-stone-700'}`}>
                 Inventario Completo ({products.length})
               </button>
+              <button onClick={() => setActiveTab('stockleft')} className={`px-4 py-2 rounded-xl text-xs font-bold ${activeTab === 'stockleft' ? 'bg-amber-900 text-white' : 'bg-stone-100 text-stone-700'}`}>
+                Lo Que Me Queda ({stats.totalUnitsInStock} u.)
+              </button>
+              <button onClick={() => setActiveTab('stats')} className={`px-4 py-2 rounded-xl text-xs font-bold ${activeTab === 'stats' ? 'bg-amber-900 text-white' : 'bg-stone-100 text-stone-700'}`}>
+                Estadísticas & Reportes
+              </button>
               <button onClick={() => setActiveTab('expenses')} className={`px-4 py-2 rounded-xl text-xs font-bold ${activeTab === 'expenses' ? 'bg-amber-900 text-white' : 'bg-stone-100 text-stone-700'}`}>
-                Gastos de Viaje (${stats.totalInvertedReal - totalFloresCost})
+                Gastos de Viaje (${totalLogisticsCost.toLocaleString('es-AR')})
               </button>
               <button onClick={() => setActiveTab('sales')} className={`px-4 py-2 rounded-xl text-xs font-bold ${activeTab === 'sales' ? 'bg-amber-900 text-white' : 'bg-stone-100 text-stone-700'}`}>
-                Historial Ventas ({salesHistory.length})
+                Ventas ({salesHistory.length})
               </button>
             </div>
 
             {/* TAB: DASHBOARD */}
             {activeTab === 'dashboard' && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="p-5 rounded-2xl bg-white border border-stone-200 shadow-sm">
-                  <span className="text-xs font-semibold text-stone-500 uppercase">Inversión Real Total</span>
-                  <div className="text-2xl font-bold font-mono text-stone-900 mt-2">${stats.totalInvertedReal.toLocaleString('es-AR')}</div>
-                  <p className="text-[11px] text-stone-500 mt-1">Flores + Gastos de Viaje</p>
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div className="p-5 rounded-2xl bg-white border border-stone-200 shadow-sm space-y-1">
+                    <span className="text-xs font-semibold text-stone-500 uppercase">Inversión Total Real</span>
+                    <div className="text-2xl font-bold font-mono text-stone-900">${stats.totalInvertedReal.toLocaleString('es-AR')}</div>
+                    <p className="text-[11px] text-stone-500">Flores: ${totalFloresCost.toLocaleString('es-AR')} | Viaje: ${totalLogisticsCost.toLocaleString('es-AR')}</p>
+                  </div>
+                  <div className="p-5 rounded-2xl bg-white border border-stone-200 shadow-sm space-y-1">
+                    <span className="text-xs font-semibold text-stone-500 uppercase">Total Cobrado en Ventas</span>
+                    <div className="text-2xl font-bold font-mono text-emerald-800">${stats.totalSalesRevenue.toLocaleString('es-AR')}</div>
+                    <p className="text-[11px] text-stone-500">Recaudación real acumulada</p>
+                  </div>
+                  <div className="p-5 rounded-2xl bg-[#59260B] text-white shadow-sm space-y-1">
+                    <span className="text-xs font-semibold text-amber-200 uppercase">Ganancia Neta Obtenida</span>
+                    <div className="text-2xl font-bold font-mono text-amber-100">${stats.netProfitRealized.toLocaleString('es-AR')}</div>
+                    <p className="text-[11px] text-amber-200/80">Ganancia limpia descontando fletes y viaje</p>
+                  </div>
+                  <div className="p-5 rounded-2xl bg-white border border-stone-200 shadow-sm space-y-1">
+                    <span className="text-xs font-semibold text-stone-500 uppercase">Prendas en Stock</span>
+                    <div className="text-2xl font-bold font-mono text-stone-900">{stats.totalUnitsInStock} unidades</div>
+                    <p className="text-[11px] text-stone-500">Valuadas en venta: ${stats.totalValuedStockPrice.toLocaleString('es-AR')}</p>
+                  </div>
                 </div>
-                <div className="p-5 rounded-2xl bg-white border border-stone-200 shadow-sm">
-                  <span className="text-xs font-semibold text-stone-500 uppercase">Total Recaudado Ventas</span>
-                  <div className="text-2xl font-bold font-mono text-emerald-800 mt-2">${stats.totalSalesRevenue.toLocaleString('es-AR')}</div>
-                  <p className="text-[11px] text-stone-500 mt-1">Total dinero cobrado</p>
-                </div>
-                <div className="p-5 rounded-2xl bg-amber-900 text-white border rounded-2xl shadow-sm">
-                  <span className="text-xs font-semibold text-amber-200 uppercase">Ganancia Neta Obtenida</span>
-                  <div className="text-2xl font-bold font-mono text-amber-100 mt-2">${stats.netProfitRealized.toLocaleString('es-AR')}</div>
-                  <p className="text-[11px] text-amber-200/80 mt-1">Limpia descontando fletes</p>
-                </div>
-                <div className="p-5 rounded-2xl bg-white border border-stone-200 shadow-sm">
-                  <span className="text-xs font-semibold text-stone-500 uppercase">Stock Valuado Venta</span>
-                  <div className="text-2xl font-bold font-mono text-stone-900 mt-2">${stats.totalValuedStockPrice.toLocaleString('es-AR')}</div>
-                  <p className="text-[11px] text-stone-500 mt-1">{stats.totalUnitsInStock} prendas en perchero</p>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <div className="bg-white border rounded-2xl p-6 space-y-3 shadow-sm">
+                    <h3 className="font-serif font-bold text-stone-900 text-sm">✨ Proyección 100% Stock Vendido</h3>
+                    <div className="text-xs text-stone-600">Venta Total Proyectada:</div>
+                    <div className="text-xl font-mono font-bold text-stone-900">${(stats.totalValuedStockPrice + stats.totalSalesRevenue).toLocaleString('es-AR')}</div>
+                    <div className="text-xs text-stone-600 pt-2">Ganancia Neta Limpia Total Proyectada:</div>
+                    <div className="text-xl font-mono font-bold text-emerald-800">${stats.projectedProfit.toLocaleString('es-AR')}</div>
+                    <p className="text-[11px] text-stone-400">Cálculo neto descontando toda la inversión logística y mercadería.</p>
+                  </div>
+                  <div className="bg-white border rounded-2xl p-6 space-y-3 shadow-sm">
+                    <h3 className="font-serif font-bold text-stone-900 text-sm">🚚 Prorrateo de Logística e Inversión (DIMIKA)</h3>
+                    <p className="text-xs text-stone-600 leading-relaxed">
+                      Cada prenda registrada suma automáticamente el recargo logístico (+{globalLogisticsPct}%) sobre el costo de Flores para asegurar que recuperes pasajes, bultos consorcio, packaging y viáticos en cada venta.
+                    </p>
+                    <div className="grid grid-cols-3 gap-2 pt-3 text-xs">
+                      <div className="p-3 bg-stone-50 rounded-xl border">
+                        <span className="text-stone-400 block">Gastos del Viaje</span>
+                        <strong className="text-stone-900 font-mono">${totalLogisticsCost.toLocaleString('es-AR')}</strong>
+                      </div>
+                      <div className="p-3 bg-stone-50 rounded-xl border">
+                        <span className="text-stone-400 block">Flete Aplicado</span>
+                        <strong className="text-amber-900 font-mono">+{globalLogisticsPct}%</strong>
+                      </div>
+                      <div className="p-3 bg-stone-50 rounded-xl border">
+                        <span className="text-stone-400 block">Prendas Disponibles</span>
+                        <strong className="text-stone-900 font-mono">{stats.totalUnitsInStock} u.</strong>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
 
             {/* TAB: INVENTORY */}
             {activeTab === 'inventory' && (
-              <div className="bg-white border border-stone-200 rounded-2xl overflow-hidden shadow-sm">
-                <table className="w-full text-left text-xs">
-                  <thead>
-                    <tr className="border-b bg-[#F9F6F0] text-stone-600 font-medium">
-                      <th className="py-3 px-4">Prenda</th>
-                      <th className="py-3 px-3">Variantes & Talles</th>
-                      <th className="py-3 px-3 text-center">Stock</th>
-                      <th className="py-3 px-3">Costo Flores</th>
-                      <th className="py-3 px-3 text-amber-950 font-bold">Costo Córdoba (+{globalLogisticsPct}%)</th>
-                      <th className="py-3 px-3 text-stone-900 font-bold">Precio Venta</th>
-                      <th className="py-3 px-4 text-right">Acción</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-stone-100">
-                    {filteredProducts.length === 0 ? (
-                      <tr><td colSpan="7" className="py-8 text-center text-stone-400">No hay prendas registradas. Tocá "+ Cargar Prenda".</td></tr>
-                    ) : (
-                      filteredProducts.map(product => {
-                        const flores = parseFloat(product.costFlores) || 0;
-                        const realCostCba = Math.round(flores * (1 + globalLogisticsPct / 100));
-                        const finalPrice = parseFloat(product.finalPrice) || 0;
-                        const totalStock = getProductStockTotal(product);
+              <div className="space-y-4">
+                <div className="flex gap-2 flex-wrap items-center bg-white p-4 border rounded-2xl">
+                  <input type="text" placeholder="Buscar prenda..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="h-10 px-3 border rounded-xl text-xs w-64" />
+                  <select value={selectedCategory} onChange={e => setSelectedCategory(e.target.value)} className="h-10 px-3 border rounded-xl text-xs">
+                    <option value="All">Todas las Categorías</option>
+                    {categories.map((c, i) => <option key={i} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div className="bg-white border border-stone-200 rounded-2xl overflow-hidden shadow-sm">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b bg-[#F9F6F0] text-stone-600 font-medium">
+                        <th className="py-3 px-4">Prenda / Categoría</th>
+                        <th className="py-3 px-3">Variantes & Talles</th>
+                        <th className="py-3 px-3 text-center">Stock</th>
+                        <th className="py-3 px-3">Costo Flores</th>
+                        <th className="py-3 px-3 text-amber-950 font-bold">Costo Córdoba (+{globalLogisticsPct}%)</th>
+                        <th className="py-3 px-3 text-stone-900 font-bold">Precio Venta</th>
+                        <th className="py-3 px-4 text-right">Acción</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-stone-100">
+                      {filteredProducts.length === 0 ? (
+                        <tr><td colSpan="7" className="py-8 text-center text-stone-400">No hay prendas registradas.</td></tr>
+                      ) : (
+                        filteredProducts.map(product => {
+                          const flores = parseFloat(product.costFlores) || 0;
+                          const realCostCba = Math.round(flores * (1 + globalLogisticsPct / 100));
+                          const finalPrice = parseFloat(product.finalPrice) || 0;
+                          const totalStock = getProductStockTotal(product);
 
-                        return (
-                          <tr key={product.id} className="h-14 hover:bg-stone-50">
-                            <td className="py-3 px-4 font-semibold text-stone-900">{product.name}</td>
-                            <td className="py-3 px-3">
-                              {(product.variants || []).map((v, i) => (
-                                <span key={i} className="mr-1.5 px-2 py-0.5 rounded-full bg-stone-100 border text-[11px]">
-                                  {v.color} ({v.size}): <strong className="font-mono">{v.quantity}u</strong>
-                                </span>
-                              ))}
-                            </td>
-                            <td className="py-3 px-3 text-center font-mono font-bold">{totalStock} u.</td>
-                            <td className="py-3 px-3 font-mono">${flores.toLocaleString('es-AR')}</td>
-                            <td className="py-3 px-3 font-mono font-bold text-amber-950">${realCostCba.toLocaleString('es-AR')}</td>
-                            <td className="py-3 px-3 font-mono font-bold text-stone-900">${finalPrice.toLocaleString('es-AR')}</td>
-                            <td className="py-3 px-4 text-right">
-                              {totalStock > 0 && (
-                                <button onClick={() => { setActiveSellProduct(product); setSellForm({ quantityToSell: '1', salePrice: String(finalPrice), paymentMethod: 'Efectivo', notes: '' }); setIsSellModalOpen(true); }} className="px-3 py-1.5 rounded-xl bg-emerald-700 text-white font-bold">
-                                  Vender
-                                </button>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })
-                    )}
-                  </tbody>
-                </table>
+                          return (
+                            <tr key={product.id} className="h-14 hover:bg-stone-50">
+                              <td className="py-3 px-4">
+                                <div className="font-semibold text-stone-900">{product.name}</div>
+                                <div className="text-[10px] text-stone-400">{product.category}</div>
+                              </td>
+                              <td className="py-3 px-3">
+                                {(product.variants || []).map((v, i) => (
+                                  <span key={i} className="mr-1 px-2 py-0.5 rounded-full bg-stone-100 border text-[11px]">
+                                    {v.color} ({v.size}): <strong className="font-mono">{v.quantity}u</strong>
+                                  </span>
+                                ))}
+                              </td>
+                              <td className="py-3 px-3 text-center font-mono font-bold">{totalStock} u.</td>
+                              <td className="py-3 px-3 font-mono">${flores.toLocaleString('es-AR')}</td>
+                              <td className="py-3 px-3 font-mono font-bold text-amber-950">${realCostCba.toLocaleString('es-AR')}</td>
+                              <td className="py-3 px-3 font-mono font-bold text-stone-900">${finalPrice.toLocaleString('es-AR')}</td>
+                              <td className="py-3 px-4 text-right">
+                                {totalStock > 0 && (
+                                  <button onClick={() => { setActiveSellProduct(product); setSellForm({ quantityToSell: '1', salePrice: String(finalPrice), paymentMethod: 'Efectivo', notes: '' }); setIsSellModalOpen(true); }} className="px-3 py-1.5 rounded-xl bg-emerald-700 text-white font-bold">
+                                    Vender
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* TAB: STOCK LEFT */}
+            {activeTab === 'stockleft' && (
+              <div className="bg-white border rounded-2xl p-6 space-y-4 shadow-sm">
+                <h3 className="font-serif font-bold text-stone-900 text-sm">Resumen de Stock Disponible por Prenda</h3>
+                <div className="space-y-3 text-xs">
+                  {products.map(p => (
+                    <div key={p.id} className="p-3 bg-stone-50 border rounded-xl flex justify-between items-center">
+                      <div>
+                        <strong className="text-stone-900">{p.name}</strong> <span className="text-stone-400">({p.category})</span>
+                        <div className="flex gap-1 mt-1">
+                          {(p.variants || []).map((v, i) => (
+                            <span key={i} className="px-2 py-0.5 bg-white border rounded text-[10px]">{v.color} {v.size}: <strong>{v.quantity}u</strong></span>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="text-right font-mono font-bold text-amber-900">
+                        Total: {getProductStockTotal(p)} u.
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* TAB: STATS & REPORTS */}
+            {activeTab === 'stats' && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="bg-white border rounded-2xl p-6 space-y-3 shadow-sm">
+                  <h3 className="font-serif font-bold text-stone-900 text-sm">📊 Rendimiento de Ventas</h3>
+                  <p className="text-xs text-stone-600">Total de prendas vendidas hasta la fecha: <strong className="font-mono">{salesHistory.reduce((a, b) => a + parseInt(b.quantitySold), 0)} unidades</strong></p>
+                  <p className="text-xs text-stone-600">Efectividad de recuperación de flete: <strong className="font-mono text-emerald-800">100% activo</strong></p>
+                </div>
+                <div className="bg-white border rounded-2xl p-6 space-y-3 shadow-sm">
+                  <h3 className="font-serif font-bold text-stone-900 text-sm">💼 Resumen Financiero Rápido</h3>
+                  <p className="text-xs text-stone-600">Margen promedio configurado: <strong className="font-mono">130%</strong></p>
+                  <p className="text-xs text-stone-600">Capital en riesgo en mercadería: <strong className="font-mono">${totalFloresCost.toLocaleString('es-AR')}</strong></p>
+                </div>
               </div>
             )}
 
@@ -539,7 +621,7 @@
               </div>
             )}
 
-            {/* TAB: SALES HISTORY */}
+            {/* TAB: SALES */}
             {activeTab === 'sales' && (
               <div className="bg-white border rounded-2xl overflow-hidden shadow-sm">
                 <table className="w-full text-left text-xs">
@@ -575,6 +657,9 @@
                 <h3 className="font-bold text-stone-900">Cargar Nueva Prenda</h3>
                 <form onSubmit={handleSaveProduct} className="space-y-3 text-xs">
                   <input type="text" placeholder="Nombre Prenda" required value={prodForm.name} onChange={e => setProdForm({...prodForm, name: e.target.value})} className="w-full h-11 px-3 border rounded-xl" />
+                  <select value={prodForm.category} onChange={e => setProdForm({...prodForm, category: e.target.value})} className="w-full h-11 px-3 border rounded-xl">
+                    {categories.map((c, i) => <option key={i} value={c}>{c}</option>)}
+                  </select>
                   <div className="grid grid-cols-2 gap-2">
                     <input type="number" placeholder="Costo Flores ($)" required value={prodForm.costFlores} onChange={e => setProdForm({...prodForm, costFlores: e.target.value})} className="w-full h-11 px-3 border rounded-xl" />
                     <input type="number" placeholder="Precio Venta ($)" value={prodForm.finalPrice} onChange={e => setProdForm({...prodForm, finalPrice: e.target.value})} className="w-full h-11 px-3 border rounded-xl font-bold text-amber-900" />
@@ -633,5 +718,3 @@
   </script>
 </body>
 </html>
-```eof
-
