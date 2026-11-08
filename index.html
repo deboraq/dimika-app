@@ -102,6 +102,7 @@
       const [editingExpense, setEditingExpense] = useState(null);
       const [isSellModalOpen, setIsSellModalOpen] = useState(false);
       const [activeSellProduct, setActiveSellProduct] = useState(null);
+      const [editingSale, setEditingSale] = useState(null);
       const [selectedSellVariantIndex, setSelectedSellVariantIndex] = useState(0);
       const [isShareModalOpen, setIsShareModalOpen] = useState(false);
       const [activeShareProduct, setActiveShareProduct] = useState(null);
@@ -121,6 +122,7 @@
         costFlores: '',
         markupPct: '130',
         finalPrice: '',
+        notes: '',
         variants: [{ color: 'Negro', size: 'M', quantity: 1 }]
       });
 
@@ -290,11 +292,11 @@
         let fileName = "";
         if (type === 'products') {
           fileName = `DIMIKA_Inventario_${new Date().toISOString().slice(0, 10)}.csv`;
-          csvContent = "ID,Nombre,Categoria,Costo Flores,Costo Real Cordoba,Precio Final,Color,Talle,Stock\n";
+          csvContent = "ID,Nombre,Categoria,Costo Flores,Costo Real Cordoba,Precio Final,Notas,Color,Talle,Stock\n";
           products.forEach(p => {
             const realCba = Math.round((parseFloat(p.costFlores) || 0) * (1 + globalLogisticsPct / 100));
             (p.variants || []).forEach(v => {
-              csvContent += `"${p.id}","${p.name}","${p.category}",${p.costFlores},${realCba},${p.finalPrice || p.priceSuggested},"${v.color}","${v.size}",${v.quantity}\n`;
+              csvContent += `"${p.id}","${p.name}","${p.category}",${p.costFlores},${realCba},${p.finalPrice || p.priceSuggested},"${p.notes || ''}","${v.color}","${v.size}",${v.quantity}\n`;
             });
           });
         } else if (type === 'sales') {
@@ -331,7 +333,7 @@
         });
       }, [products, searchTerm, selectedCategory, selectedStatus, activeTab]);
 
-      // Handlers
+      // Handlers para Prendas
       const openProductModal = (prod = null) => {
         if (prod) {
           setEditingProduct(prod);
@@ -341,6 +343,7 @@
             costFlores: String(prod.costFlores),
             markupPct: String(prod.markupPct || 130),
             finalPrice: String(prod.finalPrice || prod.priceSuggested),
+            notes: prod.notes || '',
             variants: prod.variants || [{ color: 'Negro', size: 'M', quantity: 1 }]
           });
         } else {
@@ -351,6 +354,7 @@
             costFlores: '',
             markupPct: '130',
             finalPrice: '',
+            notes: '',
             variants: [{ color: customColors[0]?.name || 'Negro', size: 'M', quantity: 1 }]
           });
         }
@@ -372,6 +376,7 @@
           markupPct: markupNum,
           priceSuggested: suggested,
           finalPrice: finalPriceNum,
+          notes: prodForm.notes || '',
           variants: prodForm.variants.map(v => ({ color: v.color, size: v.size, quantity: parseInt(v.quantity) || 0 }))
         };
 
@@ -411,33 +416,98 @@
         setIsQuickStockModalOpen(false);
       };
 
+      // --- FUNCIONES DE VENTAS (REGISTRAR, EDITAR Y ELIMINAR CON DEVOLUCIÓN DE STOCK) ---
       const handleConfirmSale = async (e) => {
         e.preventDefault();
         if (!activeSellProduct) return;
-        const variant = activeSellProduct.variants[selectedSellVariantIndex];
-        const qty = parseInt(sellForm.quantityToSell) || 1;
-        const updatedVariants = activeSellProduct.variants.map((v, i) => i === selectedSellVariantIndex ? { ...v, quantity: v.quantity - qty } : v);
 
+        const qtyToSell = parseInt(sellForm.quantityToSell) || 1;
+        const salePriceNum = parseFloat(sellForm.salePrice) || activeSellProduct.finalPrice;
         const flores = parseFloat(activeSellProduct.costFlores) || 0;
         const realCostCba = Math.round(flores * (1 + globalLogisticsPct / 100));
-        const salePriceNum = parseFloat(sellForm.salePrice) || activeSellProduct.finalPrice;
 
-        await db.collection('products').doc(activeSellProduct.id).update({ variants: updatedVariants });
-        await db.collection('sales').add({
-          productId: activeSellProduct.id,
-          productName: activeSellProduct.name,
-          category: activeSellProduct.category,
-          color: variant.color,
-          size: variant.size,
-          quantitySold: qty,
-          salePrice: salePriceNum,
-          costFlores: flores,
-          netProfitUnit: salePriceNum - realCostCba,
-          paymentMethod: sellForm.paymentMethod,
-          notes: sellForm.notes,
-          soldAt: new Date().toISOString()
-        });
+        if (editingSale) {
+          // Edición de venta existente
+          const oldQty = parseInt(editingSale.quantitySold) || 0;
+          const qtyDiff = qtyToSell - oldQty; // Positivo si vendió más, negativo si vendió menos
+
+          const updatedVariants = activeSellProduct.variants.map(v => {
+            if (v.color === editingSale.color && v.size === editingSale.size) {
+              return { ...v, quantity: v.quantity - qtyDiff };
+            }
+            return v;
+          });
+
+          await db.collection('products').doc(activeSellProduct.id).update({ variants: updatedVariants });
+          await db.collection('sales').doc(editingSale.id).update({
+            quantitySold: qtyToSell,
+            salePrice: salePriceNum,
+            netProfitUnit: salePriceNum - realCostCba,
+            paymentMethod: sellForm.paymentMethod,
+            notes: sellForm.notes
+          });
+
+          setEditingSale(null);
+        } else {
+          // Venta Nueva
+          const variant = activeSellProduct.variants[selectedSellVariantIndex];
+          const updatedVariants = activeSellProduct.variants.map((v, i) => i === selectedSellVariantIndex ? { ...v, quantity: v.quantity - qtyToSell } : v);
+
+          await db.collection('products').doc(activeSellProduct.id).update({ variants: updatedVariants });
+          await db.collection('sales').add({
+            productId: activeSellProduct.id,
+            productName: activeSellProduct.name,
+            category: activeSellProduct.category,
+            color: variant.color,
+            size: variant.size,
+            quantitySold: qtyToSell,
+            salePrice: salePriceNum,
+            costFlores: flores,
+            netProfitUnit: salePriceNum - realCostCba,
+            paymentMethod: sellForm.paymentMethod,
+            notes: sellForm.notes,
+            soldAt: new Date().toISOString()
+          });
+        }
+
         setIsSellModalOpen(false);
+      };
+
+      const openEditSaleModal = (sale) => {
+        const prod = products.find(p => p.id === sale.productId || p.name === sale.productName);
+        if (!prod) {
+          alert("No se encontró la prenda asociada en el inventario.");
+          return;
+        }
+        setEditingSale(sale);
+        setActiveSellProduct(prod);
+        setSellForm({
+          quantityToSell: String(sale.quantitySold),
+          salePrice: String(sale.salePrice),
+          paymentMethod: sale.paymentMethod || 'Efectivo',
+          notes: sale.notes || ''
+        });
+        setIsSellModalOpen(true);
+      };
+
+      const handleDeleteSale = async (sale) => {
+        if (!confirm(`¿Eliminar la venta de "${sale.productName}" (${sale.quantitySold}u.)? El stock se devolverá automáticamente al inventario.`)) return;
+
+        try {
+          const prod = products.find(p => p.id === sale.productId || p.name === sale.productName);
+          if (prod) {
+            const updatedVariants = (prod.variants || []).map(v => {
+              if (v.color === sale.color && v.size === sale.size) {
+                return { ...v, quantity: (parseInt(v.quantity) || 0) + parseInt(sale.quantitySold) };
+              }
+              return v;
+            });
+            await db.collection('products').doc(prod.id).update({ variants: updatedVariants });
+          }
+          await db.collection('sales').doc(sale.id).delete();
+        } catch (err) {
+          console.error("Error al eliminar venta:", err);
+        }
       };
 
       const openExpenseModal = (exp = null) => {
@@ -626,7 +696,7 @@
                   <table className="w-full text-left text-xs">
                     <thead>
                       <tr className="border-b bg-[#F9F6F0] text-stone-600 font-medium">
-                        <th className="py-3 px-4">Prenda / Categoría</th>
+                        <th className="py-3 px-4">Prenda / Categoría / Notas</th>
                         <th className="py-3 px-3">Variantes & Talles</th>
                         <th className="py-3 px-3 text-center">Stock Total</th>
                         <th className="py-3 px-3">Costo Flores</th>
@@ -652,6 +722,7 @@
                                 <td className="py-3 px-4">
                                   <div className="font-semibold text-stone-900">{product.name}</div>
                                   <div className="text-[10px] text-stone-400">{product.category}</div>
+                                  {product.notes && <div className="text-[10px] text-amber-900 italic mt-0.5">📝 {product.notes}</div>}
                                 </td>
                                 <td className="py-3 px-3">
                                   <div className="flex gap-1 flex-wrap">
@@ -676,9 +747,9 @@
                                 <td className="py-3 px-4 text-right">
                                   <div className="flex items-center justify-end gap-1.5">
                                     <button onClick={() => { setActiveShareProduct(product); setIsShareModalOpen(true); }} className="p-2 rounded-xl bg-stone-100 text-emerald-700" title="WhatsApp">💬</button>
-                                    <button onClick={() => openProductModal(product)} className="p-2 rounded-xl bg-stone-100 text-amber-900" title="Editar">✏️</button>
+                                    <button onClick={() => openProductModal(product)} className="p-2 rounded-xl bg-stone-100 text-amber-900" title="Editar Prenda">✏️</button>
                                     {totalStock > 0 && (
-                                      <button onClick={() => { setActiveSellProduct(product); setSelectedSellVariantIndex(0); setSellForm({ quantityToSell: '1', salePrice: String(finalPrice), paymentMethod: 'Efectivo', notes: '' }); setIsSellModalOpen(true); }} className="px-3 py-1.5 rounded-xl bg-emerald-700 text-white font-bold">
+                                      <button onClick={() => { setEditingSale(null); setActiveSellProduct(product); setSelectedSellVariantIndex(0); setSellForm({ quantityToSell: '1', salePrice: String(finalPrice), paymentMethod: 'Efectivo', notes: '' }); setIsSellModalOpen(true); }} className="px-3 py-1.5 rounded-xl bg-emerald-700 text-white font-bold">
                                         Vender
                                       </button>
                                     )}
@@ -775,31 +846,52 @@
               </div>
             )}
 
-            {/* TAB: SALES */}
+            {/* TAB: SALES (CON EDICIÓN Y ELIMINACIÓN DE VENTAS) */}
             {activeTab === 'sales' && (
-              <div className="bg-white border rounded-2xl overflow-hidden shadow-sm">
-                <table className="w-full text-left text-xs">
-                  <thead>
-                    <tr className="border-b bg-[#F9F6F0] text-stone-600 font-medium">
-                      <th className="py-3 px-4">Fecha</th>
-                      <th className="py-3 px-3">Prenda</th>
-                      <th className="py-3 px-3">Variante</th>
-                      <th className="py-3 px-3 text-center">Cant.</th>
-                      <th className="py-3 px-4 text-right">Total Cobrado</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {salesHistory.map((s, idx) => (
-                      <tr key={idx} className="h-12">
-                        <td className="py-3 px-4 text-stone-500 font-mono">{new Date(s.soldAt).toLocaleDateString('es-AR')}</td>
-                        <td className="py-3 px-3 font-semibold">{s.productName}</td>
-                        <td className="py-3 px-3">{s.color} ({s.size})</td>
-                        <td className="py-3 px-3 text-center font-mono font-bold">{s.quantitySold}</td>
-                        <td className="py-3 px-4 text-right font-mono font-bold text-emerald-800">${(parseFloat(s.salePrice) * parseInt(s.quantitySold)).toLocaleString('es-AR')}</td>
+              <div className="space-y-4">
+                <div className="flex justify-between items-center bg-white p-4 border rounded-2xl">
+                  <h3 className="font-bold text-stone-900 text-sm">Historial de Ventas</h3>
+                  <button onClick={() => exportToCSV('sales')} className="px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-800 text-xs font-bold border border-emerald-200">📥 Exportar Ventas</button>
+                </div>
+                <div className="bg-white border rounded-2xl overflow-hidden shadow-sm">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b bg-[#F9F6F0] text-stone-600 font-medium">
+                        <th className="py-3 px-4">Fecha</th>
+                        <th className="py-3 px-3">Prenda</th>
+                        <th className="py-3 px-3">Variante</th>
+                        <th className="py-3 px-3 text-center">Cant.</th>
+                        <th className="py-3 px-3">Medio Pago</th>
+                        <th className="py-3 px-3">Notas</th>
+                        <th className="py-3 px-4 text-right">Total Cobrado</th>
+                        <th className="py-3 px-4 text-right">Acción</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody className="divide-y">
+                      {salesHistory.length === 0 ? (
+                        <tr><td colSpan="8" className="py-8 text-center text-stone-400">No hay ventas registradas aún.</td></tr>
+                      ) : (
+                        salesHistory.map((s) => (
+                          <tr key={s.id} className="h-12 hover:bg-stone-50">
+                            <td className="py-3 px-4 text-stone-500 font-mono">{new Date(s.soldAt).toLocaleDateString('es-AR')}</td>
+                            <td className="py-3 px-3 font-semibold">{s.productName}</td>
+                            <td className="py-3 px-3">{s.color} ({s.size})</td>
+                            <td className="py-3 px-3 text-center font-mono font-bold">{s.quantitySold}</td>
+                            <td className="py-3 px-3 text-stone-600">{s.paymentMethod || 'Efectivo'}</td>
+                            <td className="py-3 px-3 text-stone-400 italic">{s.notes || '-'}</td>
+                            <td className="py-3 px-4 text-right font-mono font-bold text-emerald-800">${(parseFloat(s.salePrice) * parseInt(s.quantitySold)).toLocaleString('es-AR')}</td>
+                            <td className="py-3 px-4 text-right">
+                              <div className="flex items-center justify-end gap-1">
+                                <button onClick={() => openEditSaleModal(s)} className="p-1.5 bg-stone-100 rounded text-amber-900" title="Editar venta">✏️</button>
+                                <button onClick={() => handleDeleteSale(s)} className="p-1.5 bg-rose-50 text-rose-600 rounded" title="Eliminar venta y devolver stock">🗑️</button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
 
@@ -853,6 +945,7 @@
                     }} className="w-full h-11 px-3 border rounded-xl" />
                     <input type="number" placeholder="Precio Venta ($)" value={prodForm.finalPrice} onChange={e => setProdForm({...prodForm, finalPrice: e.target.value})} className="w-full h-11 px-3 border rounded-xl font-bold text-amber-900" />
                   </div>
+                  <input type="text" placeholder="Notas opcionales (ej: Tela de gasa, sin elastizar)" value={prodForm.notes} onChange={e => setProdForm({...prodForm, notes: e.target.value})} className="w-full h-11 px-3 border rounded-xl" />
 
                   <div className="p-3 bg-stone-50 border rounded-xl space-y-2">
                     <div className="flex justify-between items-center">
@@ -931,20 +1024,36 @@
             </div>
           )}
 
-          {/* MODAL: VENTA */}
+          {/* MODAL: VENTA / EDITAR VENTA */}
           {isSellModalOpen && activeSellProduct && (
             <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
               <div className="bg-white rounded-2xl p-6 w-full max-w-md space-y-4 shadow-xl text-xs">
-                <h3 className="font-bold text-stone-900 text-sm">Registrar Venta</h3>
+                <h3 className="font-bold text-stone-900 text-sm">{editingSale ? `Editar Venta de "${editingSale.productName}"` : 'Registrar Venta'}</h3>
                 <form onSubmit={handleConfirmSale} className="space-y-3">
-                  <select value={selectedSellVariantIndex} onChange={e => setSelectedSellVariantIndex(parseInt(e.target.value))} className="w-full h-11 px-3 border rounded-xl">
-                    {(activeSellProduct.variants || []).map((v, i) => (
-                      <option key={i} value={i} disabled={v.quantity <= 0}>
-                        {v.color} ({v.size}) - {v.quantity} u. disponibles
-                      </option>
-                    ))}
-                  </select>
-                  <input type="number" placeholder="Precio Venta Unitario ($)" required value={sellForm.salePrice} onChange={e => setSellForm({...sellForm, salePrice: e.target.value})} className="w-full h-11 px-3 border rounded-xl font-bold text-emerald-800" />
+                  {!editingSale && (
+                    <select value={selectedSellVariantIndex} onChange={e => setSelectedSellVariantIndex(parseInt(e.target.value))} className="w-full h-11 px-3 border rounded-xl">
+                      {(activeSellProduct.variants || []).map((v, i) => (
+                        <option key={i} value={i} disabled={v.quantity <= 0}>
+                          {v.color} ({v.size}) - {v.quantity} u. disponibles
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  {editingSale && (
+                    <div className="p-3 bg-stone-50 rounded-xl border">
+                      Variante: <strong>{editingSale.color} ({editingSale.size})</strong>
+                    </div>
+                  )}
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-stone-500 mb-1">Cantidad</label>
+                      <input type="number" min="1" required value={sellForm.quantityToSell} onChange={e => setSellForm({...sellForm, quantityToSell: e.target.value})} className="w-full h-11 px-3 border rounded-xl font-bold" />
+                    </div>
+                    <div>
+                      <label className="block text-stone-500 mb-1">Precio Unitario ($)</label>
+                      <input type="number" placeholder="Precio Venta ($)" required value={sellForm.salePrice} onChange={e => setSellForm({...sellForm, salePrice: e.target.value})} className="w-full h-11 px-3 border rounded-xl font-bold text-emerald-800" />
+                    </div>
+                  </div>
                   <select value={sellForm.paymentMethod} onChange={e => setSellForm({...sellForm, paymentMethod: e.target.value})} className="w-full h-11 px-3 border rounded-xl">
                     <option value="Efectivo">Efectivo</option>
                     <option value="Transferencia Bancaria">Transferencia Bancaria</option>
@@ -953,7 +1062,7 @@
                   <input type="text" placeholder="Notas de venta (opcional)" value={sellForm.notes} onChange={e => setSellForm({...sellForm, notes: e.target.value})} className="w-full h-11 px-3 border rounded-xl" />
                   <div className="flex justify-end gap-2">
                     <button type="button" onClick={() => setIsSellModalOpen(false)} className="px-4 py-2 rounded-xl bg-stone-100">Cancelar</button>
-                    <button type="submit" className="px-4 py-2 rounded-xl bg-emerald-700 text-white font-bold">Confirmar Venta</button>
+                    <button type="submit" className="px-4 py-2 rounded-xl bg-emerald-700 text-white font-bold">{editingSale ? 'Guardar Cambios' : 'Confirmar Venta'}</button>
                   </div>
                 </form>
               </div>
