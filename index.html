@@ -27,6 +27,7 @@
   <div id="root"></div>
 
   <script type="text/babel">
+    // --- FIREBASE CONFIGURATION (DIMIKA PROD) ---
     const firebaseConfig = {
       apiKey: "AIzaSyDBizHM3e0uV5FDwipQuYXphM-4YpPF5sQ",
       authDomain: "dimika.firebaseapp.com",
@@ -76,7 +77,8 @@
       const [products, setProducts] = useState([]);
       const [expenses, setExpenses] = useState([]);
       const [salesHistory, setSalesHistory] = useState([]);
-      const [categories] = useState(DEFAULT_CATEGORIES);
+      const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
+      const [customColors, setCustomColors] = useState(DEFAULT_COLORS);
 
       const [globalLogisticsPct, setGlobalLogisticsPct] = useState(25.0);
       const [isManualLogisticsOverride, setIsManualLogisticsOverride] = useState(false);
@@ -85,15 +87,18 @@
       const [searchTerm, setSearchTerm] = useState('');
       const [selectedCategory, setSelectedCategory] = useState('All');
       const [selectedStatus, setSelectedStatus] = useState('All');
+      const [expandedStockRows, setExpandedStockRows] = useState({});
 
       const [isProductModalOpen, setIsProductModalOpen] = useState(false);
       const [editingProduct, setEditingProduct] = useState(null);
-
       const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
-
+      const [editingExpense, setEditingExpense] = useState(null);
       const [isSellModalOpen, setIsSellModalOpen] = useState(false);
       const [activeSellProduct, setActiveSellProduct] = useState(null);
       const [selectedSellVariantIndex, setSelectedSellVariantIndex] = useState(0);
+      const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+      const [activeShareProduct, setActiveShareProduct] = useState(null);
+      const [copiedText, setCopiedText] = useState(false);
 
       const [prodForm, setProdForm] = useState({
         name: '',
@@ -101,7 +106,7 @@
         costFlores: '',
         markupPct: '130',
         finalPrice: '',
-        variants: [{ color: 'Blanco', size: 'M', quantity: 1 }]
+        variants: [{ color: 'Negro', size: 'M', quantity: 1 }]
       });
 
       const [expenseForm, setExpenseForm] = useState({ concept: '', amount: '', category: 'Viaje', notes: '' });
@@ -113,6 +118,7 @@
         notes: ''
       });
 
+      // --- AUTH LISTENER ---
       useEffect(() => {
         const unsubscribe = auth.onAuthStateChanged((currentUser) => {
           setUser(currentUser);
@@ -133,8 +139,10 @@
 
       const handleLogout = () => auth.signOut();
 
+      // --- FIRESTORE LISTENERS ---
       useEffect(() => {
         if (!user) return;
+
         const unsubProducts = db.collection('products').onSnapshot(snapshot => {
           const items = [];
           snapshot.forEach(doc => items.push({ id: doc.id, ...doc.data() }));
@@ -226,6 +234,10 @@
         return (p.variants || []).reduce((sum, v) => sum + (parseInt(v.quantity) || 0), 0);
       };
 
+      const toggleRowExpansion = (id) => {
+        setExpandedStockRows(prev => ({ ...prev, [id]: !prev[id] }));
+      };
+
       const exportFullBackupToCSV = () => {
         let csvContent = "=== BACKUP COMPLETO DIMIKA ===\n\n";
         csvContent += "--- INVENTARIO DE PRENDAS ---\nID,Nombre,Categoria,Costo Flores,Costo Cordoba,Precio Venta,Color,Talle,Stock\n";
@@ -257,9 +269,10 @@
           const catMatch = selectedCategory === 'All' || p.category === selectedCategory;
           const totalStock = getProductStockTotal(p);
           let stockMatch = selectedStatus === 'All' || (selectedStatus === 'available' ? totalStock > 0 : totalStock === 0);
+          if (activeTab === 'stock_only') stockMatch = totalStock > 0;
           return searchMatch && catMatch && stockMatch;
         });
-      }, [products, searchTerm, selectedCategory, selectedStatus]);
+      }, [products, searchTerm, selectedCategory, selectedStatus, activeTab]);
 
       const handleSaveProduct = async (e) => {
         e.preventDefault();
@@ -330,15 +343,57 @@
       const handleSaveExpense = async (e) => {
         e.preventDefault();
         if (!expenseForm.concept || !expenseForm.amount) return;
-        await db.collection('expenses').add({
+        const expenseData = {
           concept: expenseForm.concept,
           amount: parseFloat(expenseForm.amount),
           category: expenseForm.category,
           notes: expenseForm.notes || '',
-          createdAt: new Date().toISOString()
-        });
+          createdAt: editingExpense?.createdAt || new Date().toISOString()
+        };
+
+        if (editingExpense) {
+          await db.collection('expenses').doc(editingExpense.id).update(expenseData);
+        } else {
+          await db.collection('expenses').add(expenseData);
+        }
         setIsExpenseModalOpen(false);
+        setEditingExpense(null);
         setExpenseForm({ concept: '', amount: '', category: 'Viaje', notes: '' });
+      };
+
+      const addVariantRow = () => {
+        setProdForm(prev => ({ ...prev, variants: [...prev.variants, { color: 'Negro', size: 'M', quantity: 1 }] }));
+      };
+
+      const updateVariantRow = (index, field, value) => {
+        setProdForm(prev => {
+          const updated = [...prev.variants];
+          updated[index] = { ...updated[index], [field]: value };
+          return { ...prev, variants: updated };
+        });
+      };
+
+      const getWhatsAppMessage = (product) => {
+        if (!product) return '';
+        const availableVariants = (product.variants || [])
+          .filter(v => v.quantity > 0)
+          .map(v => `• ${v.color} (Talle: ${v.size})`)
+          .join('\n');
+        const finalPrice = product.finalPrice || product.priceSuggested;
+        return `✨ *DIMIKA | Boutique Fiesta (Córdoba)* ✨\n\n👗 *${product.name}*\n🏷️ Categoría: ${product.category}\n💵 *Precio: $${finalPrice.toLocaleString('es-AR')}*\n\n🎨 *Colores y Talles Disponibles:*\n${availableVariants || 'Consultar stock'}\n\n📲 ¡Escribinos para reservar la tuya! 🛍️`;
+      };
+
+      const openShareModal = (product) => {
+        setActiveShareProduct(product);
+        setCopiedText(false);
+        setIsShareModalOpen(true);
+      };
+
+      const copyToClipboard = () => {
+        const text = getWhatsAppMessage(activeShareProduct);
+        navigator.clipboard.writeText(text);
+        setCopiedText(true);
+        setTimeout(() => setCopiedText(false), 2500);
       };
 
       if (loadingAuth) return <div className="min-h-screen flex items-center justify-center text-xs text-stone-500">Cargando DIMIKA...</div>;
@@ -381,7 +436,7 @@
                     <h1 className="text-xl font-serif font-bold text-stone-900">DIMIKA</h1>
                     <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 text-[10px] font-bold uppercase">CÓRDOBA CAPITAL</span>
                   </div>
-                  <p className="text-xs text-stone-500">Control de Stock, Variantes & Analíticas Sincronizadas</p>
+                  <p className="text-xs text-stone-500">{user.email}</p>
                 </div>
               </div>
 
@@ -396,13 +451,13 @@
                   <span className="font-bold text-amber-900">%</span>
                 </div>
                 <button onClick={exportFullBackupToCSV} className="px-3 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 font-bold text-xs">📥 Backup Excel</button>
-                <button onClick={() => { setEditingProduct(null); setProdForm({ name: '', category: categories[0], costFlores: '', markupPct: '130', finalPrice: '', variants: [{ color: 'Blanco', size: 'M', quantity: 1 }] }); setIsProductModalOpen(true); }} className="px-4 py-2 rounded-xl bg-amber-900 text-white font-bold text-xs">+ Cargar Prenda</button>
+                <button onClick={() => { setEditingProduct(null); setProdForm({ name: '', category: categories[0], costFlores: '', markupPct: '130', finalPrice: '', variants: [{ color: 'Negro', size: 'M', quantity: 1 }] }); setIsProductModalOpen(true); }} className="px-4 py-2 rounded-xl bg-amber-900 text-white font-bold text-xs">+ Cargar Prenda</button>
                 <button onClick={handleLogout} className="px-3 py-2 rounded-xl bg-stone-100 text-stone-600 font-bold text-xs">Salir</button>
               </div>
             </div>
           </header>
 
-          {/* Main Navigation Tabs */}
+          {/* Navigation Tabs */}
           <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
             <div className="flex space-x-2 border-b border-stone-200 pb-2 overflow-x-auto">
               <button onClick={() => setActiveTab('dashboard')} className={`px-4 py-2 rounded-xl text-xs font-bold ${activeTab === 'dashboard' ? 'bg-amber-900 text-white' : 'bg-stone-100 text-stone-700'}`}>
@@ -458,12 +513,11 @@
                     <div className="text-xl font-mono font-bold text-stone-900">${(stats.totalValuedStockPrice + stats.totalSalesRevenue).toLocaleString('es-AR')}</div>
                     <div className="text-xs text-stone-600 pt-2">Ganancia Neta Limpia Total Proyectada:</div>
                     <div className="text-xl font-mono font-bold text-emerald-800">${stats.projectedProfit.toLocaleString('es-AR')}</div>
-                    <p className="text-[11px] text-stone-400">Cálculo neto descontando toda la inversión logística y mercadería.</p>
                   </div>
                   <div className="bg-white border rounded-2xl p-6 space-y-3 shadow-sm">
                     <h3 className="font-serif font-bold text-stone-900 text-sm">🚚 Prorrateo de Logística e Inversión (DIMIKA)</h3>
                     <p className="text-xs text-stone-600 leading-relaxed">
-                      Cada prenda registrada suma automáticamente el recargo logístico (+{globalLogisticsPct}%) sobre el costo de Flores para asegurar que recuperes pasajes, bultos consorcio, packaging y viáticos en cada venta.
+                      Cada prenda registrada suma automáticamente el recargo logístico (+{globalLogisticsPct}%) sobre el costo de Flores para asegurar la recuperación de pasajes y viáticos.
                     </p>
                     <div className="grid grid-cols-3 gap-2 pt-3 text-xs">
                       <div className="p-3 bg-stone-50 rounded-xl border">
@@ -524,22 +578,27 @@
                                 <div className="text-[10px] text-stone-400">{product.category}</div>
                               </td>
                               <td className="py-3 px-3">
-                                {(product.variants || []).map((v, i) => (
-                                  <span key={i} className="mr-1 px-2 py-0.5 rounded-full bg-stone-100 border text-[11px]">
-                                    {v.color} ({v.size}): <strong className="font-mono">{v.quantity}u</strong>
-                                  </span>
-                                ))}
+                                <div className="flex gap-1 flex-wrap">
+                                  {(product.variants || []).map((v, i) => (
+                                    <span key={i} className={`px-2 py-0.5 rounded-full border text-[11px] ${v.quantity <= 0 ? 'bg-stone-100 text-stone-400 line-through' : 'bg-stone-50 text-stone-800'}`}>
+                                      {v.color} ({v.size}): <strong className="font-mono">{v.quantity}u</strong>
+                                    </span>
+                                  ))}
+                                </div>
                               </td>
                               <td className="py-3 px-3 text-center font-mono font-bold">{totalStock} u.</td>
                               <td className="py-3 px-3 font-mono">${flores.toLocaleString('es-AR')}</td>
                               <td className="py-3 px-3 font-mono font-bold text-amber-950">${realCostCba.toLocaleString('es-AR')}</td>
                               <td className="py-3 px-3 font-mono font-bold text-stone-900">${finalPrice.toLocaleString('es-AR')}</td>
                               <td className="py-3 px-4 text-right">
-                                {totalStock > 0 && (
-                                  <button onClick={() => { setActiveSellProduct(product); setSellForm({ quantityToSell: '1', salePrice: String(finalPrice), paymentMethod: 'Efectivo', notes: '' }); setIsSellModalOpen(true); }} className="px-3 py-1.5 rounded-xl bg-emerald-700 text-white font-bold">
-                                    Vender
-                                  </button>
-                                )}
+                                <div className="flex items-center justify-end gap-1.5">
+                                  <button onClick={() => openShareModal(product)} className="p-2 rounded-xl bg-stone-100 hover:bg-stone-200 text-emerald-700" title="WhatsApp">💬</button>
+                                  {totalStock > 0 && (
+                                    <button onClick={() => { setActiveSellProduct(product); setSellForm({ quantityToSell: '1', salePrice: String(finalPrice), paymentMethod: 'Efectivo', notes: '' }); setIsSellModalOpen(true); }} className="px-3 py-1.5 rounded-xl bg-emerald-700 text-white font-bold">
+                                      Vender
+                                    </button>
+                                  )}
+                                </div>
                               </td>
                             </tr>
                           );
@@ -566,9 +625,7 @@
                           ))}
                         </div>
                       </div>
-                      <div className="text-right font-mono font-bold text-amber-900">
-                        Total: {getProductStockTotal(p)} u.
-                      </div>
+                      <div className="text-right font-mono font-bold text-amber-900">Total: {getProductStockTotal(p)} u.</div>
                     </div>
                   ))}
                 </div>
@@ -580,12 +637,10 @@
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="bg-white border rounded-2xl p-6 space-y-3 shadow-sm">
                   <h3 className="font-serif font-bold text-stone-900 text-sm">📊 Rendimiento de Ventas</h3>
-                  <p className="text-xs text-stone-600">Total de prendas vendidas hasta la fecha: <strong className="font-mono">{salesHistory.reduce((a, b) => a + parseInt(b.quantitySold), 0)} unidades</strong></p>
-                  <p className="text-xs text-stone-600">Efectividad de recuperación de flete: <strong className="font-mono text-emerald-800">100% activo</strong></p>
+                  <p className="text-xs text-stone-600">Total de prendas vendidas: <strong className="font-mono">{salesHistory.reduce((a, b) => a + parseInt(b.quantitySold), 0)} unidades</strong></p>
                 </div>
                 <div className="bg-white border rounded-2xl p-6 space-y-3 shadow-sm">
                   <h3 className="font-serif font-bold text-stone-900 text-sm">💼 Resumen Financiero Rápido</h3>
-                  <p className="text-xs text-stone-600">Margen promedio configurado: <strong className="font-mono">130%</strong></p>
                   <p className="text-xs text-stone-600">Capital en riesgo en mercadería: <strong className="font-mono">${totalFloresCost.toLocaleString('es-AR')}</strong></p>
                 </div>
               </div>
@@ -596,7 +651,7 @@
               <div className="space-y-4">
                 <div className="flex justify-between items-center bg-white p-4 border rounded-2xl">
                   <h3 className="font-bold text-stone-900 text-sm">Gastos de Viaje y Logística</h3>
-                  <button onClick={() => setIsExpenseModalOpen(true)} className="px-4 py-2 bg-amber-900 text-white text-xs font-bold rounded-xl">+ Cargar Gasto</button>
+                  <button onClick={() => { setEditingExpense(null); setExpenseForm({ concept: '', amount: '', category: 'Viaje', notes: '' }); setIsExpenseModalOpen(true); }} className="px-4 py-2 bg-amber-900 text-white text-xs font-bold rounded-xl">+ Cargar Gasto</button>
                 </div>
                 <div className="bg-white border rounded-2xl overflow-hidden shadow-sm">
                   <table className="w-full text-left text-xs">
@@ -653,7 +708,7 @@
           {/* Modal Cargar Prenda */}
           {isProductModalOpen && (
             <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-              <div className="bg-white rounded-2xl p-6 w-full max-w-md space-y-4 shadow-xl">
+              <div className="bg-white rounded-2xl p-6 w-full max-w-lg space-y-4 shadow-xl max-h-[90vh] overflow-y-auto">
                 <h3 className="font-bold text-stone-900">Cargar Nueva Prenda</h3>
                 <form onSubmit={handleSaveProduct} className="space-y-3 text-xs">
                   <input type="text" placeholder="Nombre Prenda" required value={prodForm.name} onChange={e => setProdForm({...prodForm, name: e.target.value})} className="w-full h-11 px-3 border rounded-xl" />
@@ -664,7 +719,22 @@
                     <input type="number" placeholder="Costo Flores ($)" required value={prodForm.costFlores} onChange={e => setProdForm({...prodForm, costFlores: e.target.value})} className="w-full h-11 px-3 border rounded-xl" />
                     <input type="number" placeholder="Precio Venta ($)" value={prodForm.finalPrice} onChange={e => setProdForm({...prodForm, finalPrice: e.target.value})} className="w-full h-11 px-3 border rounded-xl font-bold text-amber-900" />
                   </div>
-                  <div className="flex justify-end gap-2">
+
+                  <div className="p-3 bg-stone-50 border rounded-xl space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="font-semibold text-stone-700">Variantes (Colores / Talles / Stock)</span>
+                      <button type="button" onClick={addVariantRow} className="text-amber-900 font-bold">+ Fila</button>
+                    </div>
+                    {prodForm.variants.map((v, idx) => (
+                      <div key={idx} className="flex gap-2">
+                        <input type="text" placeholder="Color" value={v.color} onChange={e => updateVariantRow(idx, 'color', e.target.value)} className="w-1/3 h-9 px-2 border rounded-lg" />
+                        <input type="text" placeholder="Talle" value={v.size} onChange={e => updateVariantRow(idx, 'size', e.target.value)} className="w-1/3 h-9 px-2 border rounded-lg text-center" />
+                        <input type="number" placeholder="Cant" value={v.quantity} onChange={e => updateVariantRow(idx, 'quantity', e.target.value)} className="w-1/3 h-9 px-2 border rounded-lg font-bold text-center" />
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-2">
                     <button type="button" onClick={() => setIsProductModalOpen(false)} className="px-4 py-2 rounded-xl bg-stone-100">Cancelar</button>
                     <button type="submit" className="px-4 py-2 rounded-xl bg-amber-900 text-white font-bold">Guardar</button>
                   </div>
@@ -698,7 +768,9 @@
                 <form onSubmit={handleConfirmSale} className="space-y-3 text-xs">
                   <select value={selectedSellVariantIndex} onChange={e => setSelectedSellVariantIndex(parseInt(e.target.value))} className="w-full h-11 px-3 border rounded-xl">
                     {(activeSellProduct.variants || []).map((v, i) => (
-                      <option key={i} value={i}>{v.color} ({v.size}) - {v.quantity} u.</option>
+                      <option key={i} value={i} disabled={v.quantity <= 0}>
+                        {v.color} ({v.size}) - {v.quantity} u. disponibles
+                      </option>
                     ))}
                   </select>
                   <input type="number" placeholder="Precio Venta Unitario ($)" required value={sellForm.salePrice} onChange={e => setSellForm({...sellForm, salePrice: e.target.value})} className="w-full h-11 px-3 border rounded-xl font-bold text-emerald-800" />
@@ -707,6 +779,24 @@
                     <button type="submit" className="px-4 py-2 rounded-xl bg-emerald-700 text-white font-bold">Confirmar Venta</button>
                   </div>
                 </form>
+              </div>
+            </div>
+          )}
+
+          {/* Modal WhatsApp */}
+          {isShareModalOpen && activeShareProduct && (
+            <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+              <div className="bg-white rounded-2xl p-6 w-full max-w-md space-y-4 shadow-xl">
+                <h3 className="font-bold text-stone-900">Ficha para WhatsApp</h3>
+                <div className="p-3 bg-stone-50 border rounded-xl font-mono text-[11px] whitespace-pre-wrap select-all">
+                  {getWhatsAppMessage(activeShareProduct)}
+                </div>
+                <div className="flex justify-between items-center">
+                  <button onClick={() => setIsShareModalOpen(false)} className="px-4 py-2 rounded-xl bg-stone-100 text-xs">Cerrar</button>
+                  <button onClick={copyToClipboard} className="px-4 py-2 rounded-xl bg-amber-900 text-white text-xs font-bold">
+                    {copiedText ? '¡Copiado!' : 'Copiar Texto'}
+                  </button>
+                </div>
               </div>
             </div>
           )}
